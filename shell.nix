@@ -14,6 +14,7 @@ pkgs.mkShell {
     cairo
     curl
     bun
+    nodejs
     dbus
     gdk-pixbuf
     glib
@@ -89,6 +90,7 @@ pkgs.mkShell {
     export GDK_BACKEND=x11
     export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
-    echo "Tauri dev shell ready. Run: bun install && bun run tauri dev"
+    echo "Tauri dev shell ready. Stockfish must be available on PATH."
+    echo "Run: bun install && bun run tauri dev"
   '';
 }
