@@ -14,8 +14,10 @@ The first milestone includes:
 - one-pass, whole-game Stockfish reviews persisted to the desktop data folder;
 - instant per-ply evaluation, WDL, expected-points classification, and MultiPV
   playback after the review completes;
-- a local read-only MCP server for `analyze_position` and `compare_moves`;
-- a streamed Codex app-server sidebar, isolated behind the Tauri backend.
+- a local read-only MCP server for engine analysis, whole-game review, and
+  clock-addressable PNG board images;
+- a streamed Codex app-server sidebar with live thinking, MCP, waiting, and
+  replying states, isolated behind the Tauri backend.
 
 ## System dependency
 

@@ -63,11 +63,11 @@
   $effect(() => {
     const target = piecesFromFen(fen);
     const previous = untrack(() => visualPieces);
-    const fromTransforms = capturePieceTransforms(previous);
+    const fromRects = capturePieceRects(previous);
     const next = reconcilePieces(previous, target, lastMove);
     visualPieces = next;
     const cycle = ++motionCycle;
-    void animateMovedPieces(previous, next, fromTransforms, cycle);
+    void animateMovedPieces(previous, next, fromRects, cycle);
   });
 
   $effect(() => {
@@ -85,21 +85,28 @@
     return boardElement?.querySelector(`[data-piece-id="${id}"]`) ?? null;
   }
 
-  function capturePieceTransforms(pieces: VisualPiece[]): Map<string, string> {
-    const transforms = new Map<string, string>();
+  function pieceArtElement(id: string): HTMLElement | null {
+    return pieceElement(id)?.querySelector("[data-piece-art]") ?? null;
+  }
+
+  function capturePieceRects(
+    pieces: VisualPiece[],
+  ): Map<string, { left: number; top: number }> {
+    const rects = new Map<string, { left: number; top: number }>();
     for (const piece of pieces) {
-      const element = pieceElement(piece.id);
-      if (!element) continue;
-      transforms.set(piece.id, getComputedStyle(element).transform);
-      for (const animation of element.getAnimations()) animation.cancel();
+      const art = pieceArtElement(piece.id);
+      if (!art) continue;
+      const rect = art.getBoundingClientRect();
+      rects.set(piece.id, { left: rect.left, top: rect.top });
+      for (const animation of art.getAnimations()) animation.cancel();
     }
-    return transforms;
+    return rects;
   }
 
   async function animateMovedPieces(
     previous: VisualPiece[],
     next: VisualPiece[],
-    fromTransforms: Map<string, string>,
+    fromRects: Map<string, { left: number; top: number }>,
     cycle: number,
   ) {
     if (!previous.length || matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -112,17 +119,23 @@
     for (const piece of next) {
       const origin = previousById.get(piece.id);
       if (!origin || origin.square === piece.square) continue;
-      const element = pieceElement(piece.id);
-      const from = fromTransforms.get(piece.id);
-      if (!element || !from || from === "none") continue;
-      const to = getComputedStyle(element).transform;
-      if (from === to) continue;
+      const pieceElementAtDestination = pieceElement(piece.id);
+      const art = pieceArtElement(piece.id);
+      const from = fromRects.get(piece.id);
+      if (!pieceElementAtDestination || !art || !from) continue;
+      const to = pieceElementAtDestination.getBoundingClientRect();
+      const offsetX = from.left - to.left;
+      const offsetY = from.top - to.top;
+      if (Math.abs(offsetX) < 0.01 && Math.abs(offsetY) < 0.01) continue;
 
-      element.animate(
-        [{ transform: from }, { transform: to }],
+      art.animate(
+        [
+          { transform: `translate3d(${offsetX}px, ${offsetY}px, 0)` },
+          { transform: "translate3d(0, 0, 0)" },
+        ],
         {
-          duration: 420,
-          easing: "cubic-bezier(0.2, 0.76, 0.22, 1)",
+          duration: 260,
+          easing: "cubic-bezier(0.22, 0.74, 0.2, 1)",
           fill: "none",
         },
       );
@@ -410,12 +423,7 @@
     {#if engineArrow}
       {@const geometry = arrowGeometry(engineArrow, flipped)}
       <g class="drawn-arrow engine">
-        <line
-          x1={geometry.startX}
-          y1={geometry.startY}
-          x2={geometry.shaftEndX}
-          y2={geometry.shaftEndY}
-        />
+        <path d={geometry.shaftPath} />
         <polygon points={geometry.headPoints} />
       </g>
     {/if}
@@ -423,12 +431,7 @@
     {#each userArrows as arrow (`${arrow.from}-${arrow.to}-${arrow.color}`)}
       {@const geometry = arrowGeometry(arrow, flipped)}
       <g class={`drawn-arrow ${arrow.color}`}>
-        <line
-          x1={geometry.startX}
-          y1={geometry.startY}
-          x2={geometry.shaftEndX}
-          y2={geometry.shaftEndY}
-        />
+        <path d={geometry.shaftPath} />
         <polygon points={geometry.headPoints} />
       </g>
     {/each}
@@ -436,12 +439,7 @@
     {#if previewArrow}
       {@const geometry = arrowGeometry(previewArrow, flipped)}
       <g class={`drawn-arrow ${previewArrow.color} preview`}>
-        <line
-          x1={geometry.startX}
-          y1={geometry.startY}
-          x2={geometry.shaftEndX}
-          y2={geometry.shaftEndY}
-        />
+        <path d={geometry.shaftPath} />
         <polygon points={geometry.headPoints} />
       </g>
     {/if}
@@ -455,7 +453,9 @@
         data-piece-id={piece.id}
         style={`--piece-x: ${coordinates.x}; --piece-y: ${coordinates.y};`}
       >
-        <ChessPiece type={piece.type} color={piece.color} label={false} />
+        <div class="piece-art" data-piece-art>
+          <ChessPiece type={piece.type} color={piece.color} label={false} />
+        </div>
       </div>
     {/each}
   </div>
@@ -478,10 +478,10 @@
     width: 100%;
     aspect-ratio: 1;
     overflow: hidden;
-    border-radius: 7px;
+    border-radius: 5px;
     box-shadow:
-      0 1px 0 rgba(255, 255, 255, 0.08) inset,
-      0 18px 48px rgba(6, 8, 7, 0.34);
+      0 0 0 1px rgba(58, 49, 42, 0.12),
+      0 18px 42px rgba(73, 57, 44, 0.16);
   }
 
   .squares {
@@ -513,10 +513,12 @@
     filter: drop-shadow(0 1px 0 rgba(31, 38, 23, 0.22));
   }
 
-  .drawn-arrow line {
+  .drawn-arrow path {
+    fill: none;
     stroke: currentColor;
     stroke-width: 0.17;
     stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   .drawn-arrow polygon {
@@ -524,10 +526,10 @@
   }
 
   .drawn-arrow.engine {
-    color: rgba(163, 202, 77, 0.84);
+    color: rgba(185, 79, 53, 0.82);
   }
 
-  .drawn-arrow.engine line {
+  .drawn-arrow.engine path {
     stroke-width: 0.19;
   }
 
@@ -569,6 +571,11 @@
       calc(var(--piece-x) * 100%),
       calc(var(--piece-y) * 100%)
     );
+  }
+
+  .piece-art {
+    width: 100%;
+    height: 100%;
     will-change: transform;
   }
 
@@ -602,11 +609,11 @@
   }
 
   .square.light {
-    background: #eeeed2;
+    background: #eee7d7;
   }
 
   .square.dark {
-    background: #769656;
+    background: #899176;
   }
 
   .square.last::before,
@@ -615,11 +622,11 @@
     position: absolute;
     inset: 0;
     z-index: -1;
-    background: rgba(246, 246, 105, 0.66);
+    background: rgba(238, 181, 153, 0.62);
   }
 
   .square.selected::before {
-    background: rgba(255, 209, 81, 0.78);
+    background: rgba(220, 120, 89, 0.68);
   }
 
   .move-target {
@@ -628,13 +635,13 @@
     width: 26%;
     aspect-ratio: 1;
     border-radius: 999px;
-    background: rgba(27, 39, 20, 0.24);
+    background: rgba(69, 55, 45, 0.25);
     pointer-events: none;
   }
 
   .occupied .move-target {
     width: 82%;
-    border: max(4px, 0.42vw) solid rgba(27, 39, 20, 0.24);
+    border: max(4px, 0.42vw) solid rgba(69, 55, 45, 0.25);
     background: transparent;
   }
 
@@ -660,17 +667,17 @@
 
   .light .rank-coordinate,
   .light .file-coordinate {
-    color: #769656;
+    color: #737b60;
   }
 
   .dark .rank-coordinate,
   .dark .file-coordinate {
-    color: #eeeed2;
+    color: #f5efe2;
   }
 
   .square:focus-visible {
     z-index: 5;
-    outline: 3px solid #f6c453;
+    outline: 3px solid #b94f35;
     outline-offset: -3px;
   }
 

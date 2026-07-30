@@ -70,6 +70,7 @@
       <button
         class:active={variationPly === null && currentPly === row.whitePly}
         type="button"
+        aria-current={variationPly === null && currentPly === row.whitePly ? "step" : undefined}
         title={moveTitle(row.whitePly)}
         onclick={() => onSelect(row.whitePly)}
       >
@@ -82,6 +83,7 @@
         <button
           class:active={variationPly === null && currentPly === row.blackPly}
           type="button"
+          aria-current={variationPly === null && currentPly === row.blackPly ? "step" : undefined}
           title={moveTitle(row.blackPly)}
           onclick={() => onSelect(row.blackPly)}
         >
@@ -102,6 +104,7 @@
           <button
             class:active={variationPly === index + 1}
             type="button"
+            aria-current={variationPly === index + 1 ? "step" : undefined}
             title="Exploratory move — click any game move above to return to the match"
             onclick={() => onSelectVariation(index + 1)}
           >
@@ -209,6 +212,78 @@
   button.active {
     color: #f5f7ef;
     background: #547c39;
+  }
+
+  .move-list {
+    display: flex;
+    grid-template-columns: none;
+    gap: 3px;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px 0 8px;
+    scrollbar-color: var(--line-strong) transparent;
+    scrollbar-width: thin;
+  }
+
+  .move-row {
+    flex: 0 0 auto;
+    grid-template-columns: 24px 58px 58px;
+    min-height: 34px;
+    border-radius: 0;
+  }
+
+  .number {
+    padding: 0;
+    color: var(--faint);
+    font-size: 10px;
+    text-align: center;
+  }
+
+  button {
+    min-height: 30px;
+    padding: 0 6px;
+    border-radius: 6px;
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  button:hover {
+    color: var(--coral-dark);
+    background: var(--coral-soft);
+  }
+
+  button.active {
+    color: var(--pearl-raised);
+    background: var(--ink);
+  }
+
+  .variation-line {
+    flex: 0 0 auto;
+    grid-template-columns: auto auto;
+    margin: 0 0 0 8px;
+    padding: 3px 6px;
+    border-color: var(--line-strong);
+    border-radius: 8px;
+    background: var(--sage-soft);
+  }
+
+  .variation-label {
+    color: var(--sage);
+    font-size: 8px;
+  }
+
+  .variation-moves {
+    flex-wrap: nowrap;
+  }
+
+  .variation-moves small {
+    color: var(--muted);
+  }
+
+  .variation-moves button.active small {
+    color: var(--pearl);
   }
 
 </style>

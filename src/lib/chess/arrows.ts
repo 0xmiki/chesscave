@@ -14,10 +14,13 @@ export interface BoardHighlight {
 export interface ArrowGeometry {
   startX: number;
   startY: number;
+  bendX: number | null;
+  bendY: number | null;
   shaftEndX: number;
   shaftEndY: number;
   tipX: number;
   tipY: number;
+  shaftPath: string;
   headPoints: string;
 }
 
@@ -96,9 +99,30 @@ export function arrowGeometry(
   const tipY = to.y + 0.5;
   const dx = tipX - startX;
   const dy = tipY - startY;
+  const knightMove =
+    (Math.abs(dx) === 1 && Math.abs(dy) === 2) ||
+    (Math.abs(dx) === 2 && Math.abs(dy) === 1);
+  const bendX = knightMove
+    ? Math.abs(dx) === 2
+      ? tipX
+      : startX
+    : null;
+  const bendY = knightMove
+    ? Math.abs(dy) === 2
+      ? tipY
+      : startY
+    : null;
   const length = Math.hypot(dx, dy) || 1;
-  const unitX = dx / length;
-  const unitY = dy / length;
+  const unitX = knightMove
+    ? Math.abs(dx) === 2
+      ? 0
+      : Math.sign(dx)
+    : dx / length;
+  const unitY = knightMove
+    ? Math.abs(dy) === 2
+      ? 0
+      : Math.sign(dy)
+    : dy / length;
   const perpendicularX = -unitY;
   const perpendicularY = unitX;
   const headLength = 0.46;
@@ -111,14 +135,36 @@ export function arrowGeometry(
   const leftY = baseY + perpendicularY * headWidth;
   const rightX = baseX - perpendicularX * headWidth;
   const rightY = baseY - perpendicularY * headWidth;
+  let shaftPath = `M ${startX} ${startY} L ${shaftEndX} ${shaftEndY}`;
+
+  if (bendX !== null && bendY !== null) {
+    const firstDx = bendX - startX;
+    const firstDy = bendY - startY;
+    const firstLength = Math.hypot(firstDx, firstDy) || 1;
+    const firstUnitX = firstDx / firstLength;
+    const firstUnitY = firstDy / firstLength;
+    const cornerRadius = 0.22;
+    const cornerStartX = bendX - firstUnitX * cornerRadius;
+    const cornerStartY = bendY - firstUnitY * cornerRadius;
+    const cornerEndX = bendX + unitX * cornerRadius;
+    const cornerEndY = bendY + unitY * cornerRadius;
+    shaftPath =
+      `M ${startX} ${startY} ` +
+      `L ${cornerStartX} ${cornerStartY} ` +
+      `Q ${bendX} ${bendY} ${cornerEndX} ${cornerEndY} ` +
+      `L ${shaftEndX} ${shaftEndY}`;
+  }
 
   return {
     startX,
     startY,
+    bendX,
+    bendY,
     shaftEndX,
     shaftEndY,
     tipX,
     tipY,
+    shaftPath,
     headPoints: `${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`,
   };
 }

@@ -72,6 +72,8 @@ export type MoveClassification =
 export interface PositionReview {
   ply: number;
   fen: string;
+  clocks: Record<Side, number | null>;
+  lastMove: { from: string; to: string } | null;
   bestMove: string | null;
   elapsedMs: number;
   lines: EngineLine[];
@@ -122,4 +124,10 @@ export interface CoachMessage {
   role: "user" | "assistant";
   text: string;
   pending?: boolean;
+}
+
+export interface CoachActivity {
+  kind: "thinking" | "calling" | "waiting" | "replying";
+  label: string;
+  detail: string;
 }

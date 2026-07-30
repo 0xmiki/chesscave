@@ -5,7 +5,7 @@ Importing or branching a game creates one immutable sequence of positions. The
 desktop host analyzes that sequence once and saves the complete result under:
 
 ```text
-app-local-data/reviews/v1/<sha256>.json
+app-local-data/reviews/v2/<sha256>.json
 ```
 
 The key covers the ordered FEN/played-move sequence, schema version, Stockfish
@@ -27,6 +27,7 @@ GameReview
 ├─ model
 ├─ positions[]
 │  ├─ ply + fen
+│  ├─ clocks {w, b} + lastMove
 │  ├─ bestMove
 │  ├─ elapsedMs
 │  └─ lines[]
@@ -56,6 +57,11 @@ points before calculating the loss.
 the played move. The board uses it for the green best-alternative arrow when it
 differs from the played UCI move. It deliberately does not use the next
 `PositionReview.bestMove`, which belongs to the opponent's reply position.
+
+The clocks and last-move geometry are persisted with every reviewed position.
+The read-only MCP `get_position_image` tool can therefore render an exact ply,
+or select the nearest recorded White/Black clock timestamp, and return a PNG
+with the last move highlighted alongside structured FEN and clock metadata.
 
 ## Review pass
 

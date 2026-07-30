@@ -160,4 +160,70 @@
   .player-strip.active .identity small {
     color: #91b27b;
   }
+
+  .player-strip {
+    min-height: 38px;
+    color: var(--ink-soft);
+  }
+
+  .avatar,
+  .black .avatar {
+    width: 32px;
+    height: 32px;
+    border-color: var(--line);
+    border-radius: 50%;
+    color: var(--muted);
+    background: var(--pearl);
+  }
+
+  .identity strong {
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .identity span {
+    color: var(--muted);
+    font-size: 10px;
+  }
+
+  .identity small {
+    color: var(--faint);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: capitalize;
+  }
+
+  .clock,
+  .white .clock {
+    min-width: 86px;
+    height: 32px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    background: var(--pearl-raised);
+    box-shadow: none;
+  }
+
+  .black .clock {
+    color: var(--pearl-raised);
+    border-color: #403a34;
+    background: #403a34;
+  }
+
+  .clock time {
+    min-width: 50px;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .player-strip.active .clock {
+    border-color: var(--coral);
+    box-shadow: 0 0 0 2px var(--coral-soft);
+  }
+
+  .player-strip.active .identity small {
+    color: var(--coral-dark);
+  }
 </style>

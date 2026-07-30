@@ -68,13 +68,11 @@
     place-items: center;
     width: var(--badge-size);
     height: var(--badge-size);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.35);
     border-radius: 50%;
     color: white;
-    background: #8ea487;
-    box-shadow:
-      0 2px 0 rgba(0, 0, 0, 0.34),
-      0 1px 2px rgba(0, 0, 0, 0.18);
+    background: #7f8d75;
+    box-shadow: none;
     font-family: Arial, Helvetica, sans-serif;
     line-height: 1;
   }
@@ -82,41 +80,41 @@
   .badge.compact {
     --badge-size: 18px;
     border-width: 0.5px;
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.32);
+    box-shadow: none;
   }
 
   .badge.brilliant,
   .badge.great {
-    background: #22aaa7;
+    background: #548d8a;
   }
 
   .badge.best {
-    background: #95bd46;
+    background: #758b63;
   }
 
   .badge.excellent {
-    background: #9cb493;
+    background: #84947a;
   }
 
   .badge.good {
-    background: #9db593;
+    background: #8e9a84;
   }
 
   .badge.book {
-    background: #aa8b69;
+    background: #9a8062;
   }
 
   .badge.inaccuracy {
-    background: #f3bd43;
+    background: #c49a4a;
   }
 
   .badge.mistake {
-    background: #ed9220;
+    background: #c8784f;
   }
 
   .badge.miss,
   .badge.blunder {
-    background: #d43131;
+    background: #a94f42;
   }
 
   svg {

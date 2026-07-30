@@ -48,8 +48,13 @@ renderer, engine process, and coach UI.
   expected-points losses for either side, or page through the full move list
   with best moves, MultiPV candidates, evaluations, and continuations without
   running Stockfish again.
+- `get_position_image` selects a saved mainline position by exact ply or the
+  nearest recorded player clock, then returns a 768×768 PNG board plus
+  structured FEN, move, clock, and orientation metadata through MCP.
 - `CoachState` owns one app-server child and one ephemeral thread.
-- App-server JSONL is forwarded to Svelte as `chesscave://coach-event`.
+- App-server JSONL is forwarded to Svelte as `chesscave://coach-event`; the
+  sidebar maps item lifecycle events to visible thinking, MCP call, wait, and
+  reply activity states.
 
 The app-server integration is intentionally contained in `src-tauri/src/codex.rs`
 because the upstream protocol is experimental and version-specific.

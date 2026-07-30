@@ -32,6 +32,8 @@ const COACH_INSTRUCTIONS: &str = concat!(
     "For questions about an overall game, core mistakes, turning points, accuracy, or recurring patterns, ",
     "call the ChessCave MCP get_game_review tool with the supplied review key before answering. ",
     "Use its stored whole-game review instead of recalculating every position. ",
+    "When seeing the board would improve spatial reasoning, call get_position_image with the review key ",
+    "and either an exact ply or a player's displayed clock. It returns the requested board as a PNG image. ",
     "For concrete claims about an individual move or live variation, call analyze_position or compare_moves. ",
     "If the student says 'my game' but their side is not identified, ask whether they played White or Black. ",
     "Treat Stockfish output as evidence, not prose: ",
@@ -65,6 +67,22 @@ fn locate_mcp_script(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     Err("Could not locate the bundled ChessCave MCP server.".to_string())
+}
+
+fn locate_piece_directory(app: &AppHandle) -> Result<PathBuf, String> {
+    let development = project_root().join("static/pieces/neo");
+    if development.is_dir() {
+        return Ok(development);
+    }
+
+    if let Ok(resources) = app.path().resource_dir() {
+        let bundled = resources.join("pieces/neo");
+        if bundled.is_dir() {
+            return Ok(bundled);
+        }
+    }
+
+    Err("Could not locate the bundled ChessCave piece artwork.".to_string())
 }
 
 fn toml_string(value: &str) -> Result<String, String> {
@@ -219,6 +237,7 @@ pub async fn coach_start(app: AppHandle, state: State<'_, CoachState>) -> Result
     }
 
     let mcp_script = locate_mcp_script(&app)?;
+    let piece_directory = locate_piece_directory(&app)?;
     let root = project_root();
     let workspace = coach_workspace(&app)?;
     let review_directory = game_review_directory(&app)?;
@@ -231,6 +250,8 @@ pub async fn coach_start(app: AppHandle, state: State<'_, CoachState>) -> Result
         mcp_script.to_string_lossy().to_string(),
         "--review-dir".to_string(),
         review_directory.to_string_lossy().to_string(),
+        "--piece-dir".to_string(),
+        piece_directory.to_string_lossy().to_string(),
     ])
     .map_err(|error| error.to_string())?;
 

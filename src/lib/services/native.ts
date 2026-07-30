@@ -42,6 +42,8 @@ export async function reviewGame(
     positions: game.snapshots.map((snapshot) => ({
       ply: snapshot.ply,
       fen: snapshot.fen,
+      clocks: snapshot.clocks,
+      lastMove: snapshot.lastMove,
     })),
     moves: game.moves.map((move, index) => ({
       ply: index + 1,

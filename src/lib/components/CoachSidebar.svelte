@@ -1,10 +1,13 @@
 <script lang="ts">
-  import type { CoachMessage } from "$lib/chess/types";
+  import { tick } from "svelte";
+  import type { CoachActivity, CoachMessage } from "$lib/chess/types";
 
   let {
     messages,
     status,
     detail,
+    activity,
+    contextLabel,
     busy,
     onSend,
     onNewConversation,
@@ -12,12 +15,15 @@
     messages: CoachMessage[];
     status: "offline" | "starting" | "ready" | "thinking" | "error";
     detail: string;
+    activity: CoachActivity | null;
+    contextLabel: string;
     busy: boolean;
     onSend: (message: string) => void;
     onNewConversation: () => void;
   } = $props();
 
   let draft = $state("");
+  let messagesElement: HTMLDivElement;
   const suggested = [
     "Why was the last move played?",
     "What is the strongest plan here?",
@@ -26,7 +32,7 @@
 
   function submit() {
     const message = draft.trim();
-    if (!message || busy || status === "offline") return;
+    if (!message || busy || status !== "ready") return;
     draft = "";
     onSend(message);
   }
@@ -46,14 +52,27 @@
       .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
       .replaceAll("\n", "<br />");
   }
+
+  $effect(() => {
+    messages.length;
+    messages.at(-1)?.text;
+    messages.at(-1)?.pending;
+    activity?.label;
+    activity?.detail;
+    void tick().then(() => {
+      if (messagesElement && (activity || messages.at(-1)?.pending)) {
+        messagesElement.scrollTop = messagesElement.scrollHeight;
+      }
+    });
+  });
 </script>
 
-<aside class="coach">
+<section class="coach" aria-label="Coach">
   <header>
     <div class="coach-mark">S</div>
-    <div>
-      <div class="eyebrow">PERSONAL COACH</div>
-      <h2>Ask Sol</h2>
+    <div class="coach-title">
+      <h2>Sol</h2>
+      <p>{contextLabel}</p>
     </div>
     <div class="header-actions">
       <button
@@ -73,20 +92,11 @@
     </div>
   </header>
 
-  <div class="context-card">
-    <div class="context-icon">⌁</div>
-    <div>
-      <strong>Board aware</strong>
-      <span>{detail}</span>
-    </div>
-  </div>
-
-  <div class="messages" aria-live="polite">
+  <div class="messages" bind:this={messagesElement} aria-live="polite">
     {#if messages.length === 0}
       <div class="welcome">
-        <div class="spark">✦</div>
-        <h3>Let’s study this position.</h3>
-        <p>I can ask Stockfish for concrete lines, then help you understand the ideas behind them.</p>
+        <h3>Ask about the game.</h3>
+        <p>Sol can use the current position and the saved full-game review to explain what mattered.</p>
       </div>
       <div class="suggestions">
         {#each suggested as suggestion}
@@ -99,15 +109,24 @@
     {:else}
       {#each messages as message (message.id)}
         <div class:assistant={message.role === "assistant"} class="message">
-          {#if message.role === "assistant"}
-            <span class="avatar">S</span>
+          {#if message.text}
+            <div class="bubble">
+              {@html renderMarkdown(message.text)}
+              {#if message.pending}<span class="typing">···</span>{/if}
+            </div>
           {/if}
-          <div class="bubble">
-            {@html renderMarkdown(message.text || "Thinking")}
-            {#if message.pending}<span class="typing">···</span>{/if}
-          </div>
         </div>
       {/each}
+    {/if}
+
+    {#if activity}
+      <div class={`activity ${activity.kind}`} role="status" aria-live="polite">
+        <span class="activity-spinner" aria-hidden="true"></span>
+        <span class="activity-copy">
+          <strong>{activity.label}</strong>
+          <small>{activity.detail}</small>
+        </span>
+      </div>
     {/if}
   </div>
 
@@ -124,361 +143,391 @@
         }
       }}
     ></textarea>
-    <button class="send" type="submit" disabled={!draft.trim() || busy || status === "offline"} aria-label="Send">
+    <button class="send" type="submit" disabled={!draft.trim() || busy || status !== "ready"} aria-label="Send">
       ↑
     </button>
     <div class="input-meta">
       <span class="live-dot"></span>
-      {status === "ready" ? "Codex + Stockfish ready" : detail}
+      {status === "ready" ? "Ready for this position" : detail}
     </div>
   </form>
-</aside>
+</section>
 
 <style>
-  .coach {
-    display: grid;
-    grid-template-rows: auto auto 1fr auto;
-    min-width: 0;
-    height: 100%;
-    overflow: hidden;
-    border-left: 1px solid #333730;
-    background:
-      radial-gradient(circle at 80% -10%, rgba(99, 142, 70, 0.12), transparent 30%),
-      #222521;
-  }
+.coach {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  background: transparent;
+}
 
-  header {
-    display: grid;
-    grid-template-columns: 38px 1fr auto;
-    gap: 11px;
-    align-items: center;
-    padding: 18px 20px 14px;
-  }
+header {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--line);
+}
 
-  .coach-mark,
-  .avatar {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    aspect-ratio: 1;
-    border-radius: 11px;
-    color: #15210f;
-    background: linear-gradient(145deg, #a8d28b, #78a85a);
-    font-family: Georgia, serif;
-    font-size: 19px;
-    font-weight: 800;
-    box-shadow: 0 5px 16px rgba(73, 113, 47, 0.22);
-  }
+.coach-mark {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #e5b9a9;
+  border-radius: 50%;
+  color: var(--coral-dark);
+  background: var(--coral-soft);
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 650;
+}
 
-  .eyebrow {
-    color: #8fa881;
-    font-size: 9px;
-    font-weight: 850;
-    letter-spacing: 0.16em;
-  }
+.coach-title {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
 
-  h2,
-  h3,
-  p {
-    margin: 0;
-  }
+h2,
+h3,
+p {
+  margin: 0;
+}
 
-  h2 {
-    margin-top: 1px;
-    color: #f0f2ec;
-    font-family: Georgia, serif;
-    font-size: 19px;
-  }
+.coach-title h2 {
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 18px;
+  font-variation-settings: "opsz" 20, "wght" 600;
+}
 
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: #6d716a;
-    box-shadow: 0 0 0 4px rgba(109, 113, 106, 0.09);
-  }
+.coach-title p {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-  .status-dot.ready {
-    background: #88b96a;
-    box-shadow: 0 0 0 4px rgba(136, 185, 106, 0.1);
-  }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-  .status-dot.thinking {
-    background: #d3a84f;
-    animation: pulse 1.2s ease-in-out infinite;
-  }
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
 
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
+.status-dot.ready {
+  background: var(--sage);
+}
 
-  .new-conversation {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border: 1px solid #3b4038;
-    border-radius: 8px;
-    color: #aeb5aa;
-    background: #292d27;
-    cursor: pointer;
-  }
+.status-dot.thinking {
+  background: var(--coral);
+  animation: pulse 1.2s ease-in-out infinite;
+}
 
-  .new-conversation:hover:not(:disabled) {
-    border-color: #668456;
-    color: #dce8d5;
-    background: #30362d;
-  }
+.new-conversation {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--ink-soft);
+  background: var(--paper);
+  cursor: pointer;
+}
 
-  .new-conversation:disabled {
-    cursor: not-allowed;
+.new-conversation:hover:not(:disabled) {
+  border-color: var(--coral);
+  color: var(--coral-dark);
+  background: var(--coral-soft);
+}
+
+.new-conversation:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.new-conversation svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.messages {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 10px 24px 26px;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.welcome {
+  padding: 35px 0 24px;
+  text-align: left;
+}
+
+.welcome h3 {
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 26px;
+  font-variation-settings: "opsz" 28, "wght" 570;
+}
+
+.welcome p {
+  max-width: 32ch;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.suggestions {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.suggestions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.suggestions button span {
+  color: var(--coral-dark);
+}
+
+.suggestions button:hover:not(:disabled) {
+  padding-inline: 8px;
+  color: var(--coral-dark);
+  background: var(--coral-soft);
+}
+
+.suggestions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.message {
+  display: block;
+  margin: 18px 0;
+}
+
+.bubble {
+  width: fit-content;
+  max-width: 88%;
+  margin-left: auto;
+  padding: 10px 13px;
+  overflow-wrap: anywhere;
+  border: 0;
+  border-radius: 12px 12px 2px;
+  color: var(--ink);
+  background: var(--coral-soft);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.assistant .bubble {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 5px 0 18px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.bubble :global(strong) {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.bubble :global(em) {
+  color: var(--coral-dark);
+}
+
+.bubble :global(code) {
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+
+.typing {
+  margin-left: 3px;
+  animation: pulse 1s infinite;
+}
+
+.activity {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  margin: 12px 0 4px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.activity-spinner {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--coral-dark);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.activity.calling .activity-spinner,
+.activity.waiting .activity-spinner {
+  border-top-color: var(--sage);
+}
+
+.activity-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.activity-copy strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+form {
+  position: relative;
+  margin: 0 18px 18px;
+  padding: 10px 48px 25px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--pearl-raised);
+  box-shadow: 0 8px 24px rgba(78, 61, 47, 0.08);
+}
+
+textarea {
+  width: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+textarea::placeholder {
+  color: var(--faint);
+}
+
+.send {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: grid;
+  width: 31px;
+  height: 31px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: var(--pearl-raised);
+  background: var(--ink);
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.send:hover:not(:disabled) {
+  background: var(--coral-dark);
+}
+
+.send:disabled {
+  color: var(--faint);
+  background: var(--paper);
+  cursor: not-allowed;
+}
+
+.input-meta {
+  position: absolute;
+  left: 12px;
+  bottom: 7px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: calc(100% - 60px);
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-dot {
+  flex: 0 0 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--sage);
+}
+
+@keyframes pulse {
+  50% {
     opacity: 0.4;
   }
+}
 
-  .new-conversation svg {
-    width: 17px;
-    height: 17px;
-    fill: none;
-    stroke: currentColor;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 1.8;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
-
-  .context-card {
-    display: flex;
-    gap: 11px;
-    align-items: center;
-    margin: 0 16px 12px;
-    padding: 11px 13px;
-    border: 1px solid #393e36;
-    border-radius: 10px;
-    background: #292d27;
-  }
-
-  .context-icon {
-    color: #9dc183;
-    font-size: 24px;
-  }
-
-  .context-card strong,
-  .context-card span {
-    display: block;
-  }
-
-  .context-card strong {
-    color: #e2e5de;
-    font-size: 12px;
-  }
-
-  .context-card span {
-    max-width: 260px;
-    overflow: hidden;
-    color: #8f958c;
-    font-size: 10px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .messages {
-    min-height: 0;
-    overflow: auto;
-    padding: 10px 18px 20px;
-    scrollbar-color: #4b5048 transparent;
-  }
-
-  .welcome {
-    padding: 28px 8px 21px;
-    text-align: center;
-  }
-
-  .spark {
-    margin-bottom: 12px;
-    color: #a7ce8d;
-    font-size: 24px;
-  }
-
-  h3 {
-    color: #e9ebe6;
-    font-family: Georgia, serif;
-    font-size: 18px;
-  }
-
-  .welcome p {
-    max-width: 270px;
-    margin: 9px auto 0;
-    color: #979d94;
-    font-size: 12px;
-    line-height: 1.55;
-  }
-
-  .suggestions {
-    display: grid;
-    gap: 7px;
-  }
-
-  .suggestions button {
-    display: flex;
-    justify-content: space-between;
-    padding: 11px 12px;
-    border: 1px solid #393d37;
-    border-radius: 9px;
-    color: #cbd0c7;
-    background: #292c28;
-    font: inherit;
-    font-size: 11px;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .suggestions button:hover:not(:disabled) {
-    border-color: #5f7950;
-    background: #30352e;
-  }
-
-  .suggestions button:disabled {
-    cursor: not-allowed;
-    opacity: 0.42;
-  }
-
-  .message {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin: 12px 0;
-  }
-
-  .message.assistant {
-    justify-content: flex-start;
-  }
-
-  .message .avatar {
-    flex: 0 0 25px;
-    width: 25px;
-    height: 25px;
-    border-radius: 8px;
-    font-size: 13px;
-  }
-
-  .bubble {
-    max-width: 82%;
-    padding: 10px 12px;
-    border-radius: 12px 12px 3px 12px;
-    color: #f0f1ed;
-    background: #4f713e;
-    font-size: 12px;
-    line-height: 1.55;
-    white-space: pre-wrap;
-  }
-
-  .assistant .bubble {
-    border: 1px solid #393d37;
-    border-radius: 3px 12px 12px;
-    color: #daddd6;
-    background: #292c28;
-  }
-
-  .bubble :global(strong) {
-    color: #f0f2ec;
-    font-weight: 780;
-  }
-
-  .bubble :global(em) {
-    color: #c8d9be;
-  }
-
-  .bubble :global(code) {
-    padding: 1px 4px;
-    border-radius: 4px;
-    color: #c7dfb8;
-    background: #1e211d;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.92em;
-  }
-
-  .typing {
-    margin-left: 3px;
-    animation: pulse 1s infinite;
-  }
-
-  form {
-    position: relative;
-    margin: 0 16px 16px;
-    padding: 10px 48px 25px 12px;
-    border: 1px solid #42473f;
-    border-radius: 12px;
-    background: #2c302b;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.17);
-  }
-
-  textarea {
-    width: 100%;
-    resize: none;
-    border: 0;
-    outline: 0;
-    color: #edf0e9;
-    background: transparent;
-    font: inherit;
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  textarea::placeholder {
-    color: #7e847b;
-  }
-
-  .send {
-    position: absolute;
-    right: 10px;
-    bottom: 10px;
-    display: grid;
-    place-items: center;
-    width: 31px;
-    height: 31px;
-    border: 0;
-    border-radius: 9px;
-    color: #172210;
-    background: #90bd72;
-    font-size: 18px;
-    font-weight: 800;
-    cursor: pointer;
-  }
-
-  .send:disabled {
-    color: #767b73;
-    background: #3b4039;
-    cursor: not-allowed;
-  }
-
-  .input-meta {
-    position: absolute;
-    left: 12px;
-    bottom: 7px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    max-width: calc(100% - 60px);
-    overflow: hidden;
-    color: #767c73;
-    font-size: 8px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .live-dot {
-    flex: 0 0 4px;
-    width: 4px;
-    height: 4px;
-    border-radius: 999px;
-    background: #7ca963;
-  }
-
-  @keyframes pulse {
-    50% {
-      opacity: 0.4;
-    }
-  }
+}
 </style>

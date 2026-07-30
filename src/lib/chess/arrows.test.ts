@@ -86,4 +86,21 @@ describe("board arrows", () => {
     expect(black.startY).toBe(1.5);
     expect(black.tipY).toBe(3.5);
   });
+
+  test("bends knight-move arrows through a rounded L path", () => {
+    const knight = arrowGeometry(uciToArrow("g1f3", "yellow")!, false);
+
+    expect(knight.startX).toBe(6.5);
+    expect(knight.startY).toBe(7.5);
+    expect(knight.bendX).toBe(6.5);
+    expect(knight.bendY).toBe(5.5);
+    expect(knight.shaftEndX).toBeCloseTo(5.78);
+    expect(knight.shaftEndY).toBe(5.5);
+    expect(knight.shaftPath).toContain("Q 6.5 5.5");
+
+    const straight = arrowGeometry(uciToArrow("e2e4", "yellow")!, false);
+    expect(straight.bendX).toBeNull();
+    expect(straight.bendY).toBeNull();
+    expect(straight.shaftPath).not.toContain("Q");
+  });
 });

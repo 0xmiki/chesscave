@@ -29,7 +29,20 @@
     "targets": "all",
     "resources": {
       "../scripts/chesscave-mcp.mjs": "scripts/chesscave-mcp.mjs",
-      "../scripts/chesscave-review.mjs": "scripts/chesscave-review.mjs"
+      "../scripts/chesscave-review.mjs": "scripts/chesscave-review.mjs",
+      "../scripts/chesscave-board-image.mjs": "scripts/chesscave-board-image.mjs",
+      "../static/pieces/neo/bb.png": "pieces/neo/bb.png",
+      "../static/pieces/neo/bk.png": "pieces/neo/bk.png",
+      "../static/pieces/neo/bn.png": "pieces/neo/bn.png",
+      "../static/pieces/neo/bp.png": "pieces/neo/bp.png",
+      "../static/pieces/neo/bq.png": "pieces/neo/bq.png",
+      "../static/pieces/neo/br.png": "pieces/neo/br.png",
+      "../static/pieces/neo/wb.png": "pieces/neo/wb.png",
+      "../static/pieces/neo/wk.png": "pieces/neo/wk.png",
+      "../static/pieces/neo/wn.png": "pieces/neo/wn.png",
+      "../static/pieces/neo/wp.png": "pieces/neo/wp.png",
+      "../static/pieces/neo/wq.png": "pieces/neo/wq.png",
+      "../static/pieces/neo/wr.png": "pieces/neo/wr.png"
     },
     "icon": [
       "icons/32x32.png",

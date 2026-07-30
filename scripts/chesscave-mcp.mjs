@@ -1,20 +1,27 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import path from "node:path";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import {
   createGameReviewDigest,
   readStoredGameReview,
 } from "./chesscave-review.mjs";
+import { createPositionImage } from "./chesscave-board-image.mjs";
 
 const ENGINE_PATH = process.env.CHESSCAVE_STOCKFISH_PATH || "stockfish";
-const SERVER_INFO = { name: "chesscave", version: "0.1.0" };
+const SERVER_INFO = { name: "chesscave", version: "0.2.0" };
 const reviewDirectoryArgument = process.argv.indexOf("--review-dir");
+const pieceDirectoryArgument = process.argv.indexOf("--piece-dir");
 const REVIEW_DIRECTORY =
   process.env.CHESSCAVE_REVIEW_DIR ||
   (reviewDirectoryArgument >= 0 ? process.argv[reviewDirectoryArgument + 1] : null);
+const PIECE_DIRECTORY =
+  process.env.CHESSCAVE_PIECE_DIR ||
+  (pieceDirectoryArgument >= 0 ? process.argv[pieceDirectoryArgument + 1] : null);
 
-const tools = [
+export const tools = [
   {
     name: "analyze_position",
     title: "Analyze a chess position",
@@ -83,6 +90,55 @@ const tools = [
         },
       },
       required: ["fen", "played_move"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_position_image",
+    title: "Get an image of any reviewed board position",
+    description:
+      "Return a PNG image of a position in ChessCave's completed game review. Select the exact position by ply, or find the nearest recorded position using a displayed White or Black clock such as 8:34. Use this whenever seeing piece placement would improve spatial, tactical, or positional reasoning. Supply exactly one of ply or clock.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        game_key: {
+          type: "string",
+          pattern: "^[a-fA-F0-9]{64}$",
+          description:
+            "The completed review key supplied in ChessCave's position context.",
+        },
+        ply: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Exact half-move index, where 0 is the starting position, 1 is after White's first move, and 2 is after Black's first move.",
+        },
+        clock: {
+          type: "string",
+          description:
+            "Displayed clock timestamp written as M:SS or H:MM:SS, for example 8:34. ChessCave returns the nearest recorded match.",
+        },
+        clock_side: {
+          type: "string",
+          enum: ["white", "black", "either"],
+          default: "either",
+          description:
+            "Whose displayed clock to match. Specify the side when it is known to avoid ambiguity.",
+        },
+        orientation: {
+          type: "string",
+          enum: ["white", "black"],
+          default: "white",
+          description: "Which player's side appears at the bottom of the image.",
+        },
+      },
+      required: ["game_key"],
       additionalProperties: false,
     },
   },
@@ -283,9 +339,18 @@ function scoreForSideToMove(line, whiteToMove) {
   return line.scoreCp * (whiteToMove ? 1 : -1);
 }
 
-async function callTool(name, args) {
+export async function callTool(name, args, configuration = {}) {
+  const reviewDirectory =
+    configuration.reviewDirectory ?? REVIEW_DIRECTORY;
+  const pieceDirectory =
+    configuration.pieceDirectory ?? PIECE_DIRECTORY;
+  if (name === "get_position_image") {
+    const review = await readStoredGameReview(reviewDirectory, args.game_key);
+    return createPositionImage(review, args, pieceDirectory);
+  }
+
   if (name === "get_game_review") {
-    const review = await readStoredGameReview(REVIEW_DIRECTORY, args.game_key);
+    const review = await readStoredGameReview(reviewDirectory, args.game_key);
     return createGameReviewDigest(review, {
       focus: args.focus,
       side: args.side,
@@ -330,6 +395,31 @@ async function callTool(name, args) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
+export function createMcpToolResult(result) {
+  if (Buffer.isBuffer(result?.png)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result.metadata, null, 2),
+        },
+        {
+          type: "image",
+          data: result.png.toString("base64"),
+          mimeType: "image/png",
+        },
+      ],
+      structuredContent: result.metadata,
+      isError: false,
+    };
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    structuredContent: result,
+    isError: false,
+  };
+}
+
 async function handle(request) {
   const { id, method, params = {} } = request;
 
@@ -358,14 +448,7 @@ async function handle(request) {
   if (method === "tools/call") {
     try {
       const result = await callTool(params.name, params.arguments || {});
-      write({
-        id,
-        result: {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: result,
-          isError: false,
-        },
-      });
+      write({ id, result: createMcpToolResult(result) });
     } catch (error) {
       write({
         id,
@@ -386,12 +469,21 @@ async function handle(request) {
   if (id !== undefined) errorMessage(id, -32601, `Method not found: ${method}`);
 }
 
-const input = readline.createInterface({ input: process.stdin });
-input.on("line", (line) => {
-  if (!line.trim()) return;
-  try {
-    void handle(JSON.parse(line));
-  } catch (error) {
-    process.stderr.write(`[chesscave-mcp] Invalid JSON: ${String(error)}\n`);
-  }
-});
+export function startMcpServer() {
+  const input = readline.createInterface({ input: process.stdin });
+  input.on("line", (line) => {
+    if (!line.trim()) return;
+    try {
+      void handle(JSON.parse(line));
+    } catch (error) {
+      process.stderr.write(`[chesscave-mcp] Invalid JSON: ${String(error)}\n`);
+    }
+  });
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  startMcpServer();
+}

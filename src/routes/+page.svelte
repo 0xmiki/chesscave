@@ -26,6 +26,7 @@
   } from "$lib/chess/openings";
   import type {
     AnalysisResult,
+    CoachActivity,
     CoachMessage,
     EngineStatus,
     GameReview,
@@ -74,9 +75,12 @@
     hasNativeHost() ? "Starting Codex app-server…" : "Desktop preview required",
   );
   let coachMessages = $state<CoachMessage[]>([]);
+  let coachActivity = $state<CoachActivity | null>(null);
+  let activeCoachTools = $state<Record<string, string>>({});
   let importOpen = $state(false);
   let pgnDraft = $state("");
   let importError = $state("");
+  let studyTab = $state<"review" | "coach">("review");
   let storageReady = $state(false);
   let openingBook = $state<OpeningBook | null>(null);
   let openingError = $state("");
@@ -177,6 +181,9 @@
     );
   });
   const eventTitle = $derived(game.headers.Event || "Untitled game");
+  const matchupTitle = $derived(
+    `${game.headers.White || "White"} vs ${game.headers.Black || "Black"}`,
+  );
   const whitePlayer = $derived({
     side: "w" as Side,
     name: game.headers.White || "White player",
@@ -483,6 +490,7 @@
       variationPly = null;
       selected = null;
       review = null;
+      studyTab = "review";
       importOpen = false;
       pgnDraft = "";
       if (engine.available) void requestGameReview();
@@ -534,6 +542,7 @@
             `Last move: ${lastMove.san} (${lastMove.lan} in UCI notation)`,
           ]
         : []),
+      `Displayed clocks: White ${snapshot.clocks.w ?? "unknown"} seconds, Black ${snapshot.clocks.b ?? "unknown"} seconds`,
       `Moves played: ${moves || "(starting position)"}`,
       `Side to move: ${sideToMove(snapshot.fen)}`,
       ...(currentOpening
@@ -561,11 +570,17 @@
     coachMessages = [...coachMessages, { id, role: "user", text }];
     coachStatus = "thinking";
     coachDetail = "Sol is studying the position…";
+    coachActivity = {
+      kind: "thinking",
+      label: "Considering your question",
+      detail: "Sol is deciding what evidence to inspect.",
+    };
     try {
       await sendCoachMessage(text, coachContext());
     } catch (error) {
       coachStatus = "error";
       coachDetail = String(error);
+      coachActivity = null;
     }
   }
 
@@ -574,6 +589,8 @@
 
     coachStatus = "starting";
     coachDetail = "Starting a new conversation…";
+    coachActivity = null;
+    activeCoachTools = {};
     try {
       await newCoachThread();
       coachMessages = [];
@@ -581,6 +598,46 @@
       coachStatus = "error";
       coachDetail = String(error);
     }
+  }
+
+  function coachToolName(item: Record<string, unknown> | undefined): string {
+    const raw = String(item?.tool ?? item?.toolName ?? item?.name ?? "chess tool");
+    return raw.split(/[./]/).at(-1) || raw;
+  }
+
+  function coachToolLabel(tool: string, waiting = false): CoachActivity {
+    const verb = waiting ? "Waiting for" : "Calling";
+    const labels: Record<string, [string, string]> = {
+      get_position_image: [
+        `${verb} board image`,
+        waiting
+          ? "ChessCave is rendering the requested position."
+          : "Opening the position through ChessCave MCP.",
+      ],
+      get_game_review: [
+        `${verb} full-game review`,
+        waiting
+          ? "ChessCave is loading the saved Stockfish review."
+          : "Reading the game evidence through ChessCave MCP.",
+      ],
+      analyze_position: [
+        `${verb} Stockfish analysis`,
+        waiting
+          ? "Stockfish is calculating candidate moves."
+          : "Sending this position to the ChessCave engine.",
+      ],
+      compare_moves: [
+        `${verb} move comparison`,
+        waiting
+          ? "Stockfish is comparing the played move and best line."
+          : "Sending both lines to the ChessCave engine.",
+      ],
+    };
+    const [label, detail] = labels[tool] ?? [
+      `${verb} ChessCave tool`,
+      waiting ? "Waiting for the MCP result." : `Using ${tool} through MCP.`,
+    ];
+    return { kind: waiting ? "waiting" : "calling", label, detail };
   }
 
   function handleCoachEvent(event: Record<string, unknown>) {
@@ -597,6 +654,8 @@
       const error = event.error as Record<string, unknown>;
       coachStatus = "error";
       coachDetail = String(error.message ?? "Codex app-server error");
+      coachActivity = null;
+      activeCoachTools = {};
       return;
     }
 
@@ -609,6 +668,8 @@
     if (method === "chesscave/error") {
       coachStatus = "error";
       coachDetail = String(params.message ?? "Codex app-server stopped");
+      coachActivity = null;
+      activeCoachTools = {};
       return;
     }
 
@@ -624,14 +685,32 @@
     }
 
     if (method === "item/mcpToolCall/progress") {
-      coachDetail = "Stockfish is calculating…";
+      const itemId = String(params.itemId ?? params.item_id ?? "");
+      const tool =
+        activeCoachTools[itemId] ??
+        Object.values(activeCoachTools).at(-1) ??
+        "chess tool";
+      coachActivity = coachToolLabel(tool, true);
+      coachDetail = coachActivity.label;
       return;
     }
 
     if (method === "item/started") {
       const item = params.item as Record<string, unknown> | undefined;
-      if (item?.type === "mcpToolCall") coachDetail = "Consulting Stockfish…";
+      if (item?.type === "mcpToolCall") {
+        const itemId = String(item.id ?? crypto.randomUUID());
+        const tool = coachToolName(item);
+        activeCoachTools = { ...activeCoachTools, [itemId]: tool };
+        coachActivity = coachToolLabel(tool);
+        coachDetail = coachActivity.label;
+      }
       if (item?.type === "agentMessage") {
+        coachActivity = {
+          kind: "replying",
+          label: "Writing a response",
+          detail: "Sol is turning the evidence into a clear explanation.",
+        };
+        coachDetail = coachActivity.label;
         const messageId = String(item.id ?? crypto.randomUUID());
         if (!coachMessages.some((message) => message.id === messageId)) {
           coachMessages = [
@@ -644,6 +723,12 @@
     }
 
     if (method === "item/agentMessage/delta") {
+      coachActivity = {
+        kind: "replying",
+        label: "Writing a response",
+        detail: "The answer is arriving now.",
+      };
+      coachDetail = coachActivity.label;
       const itemId = String(params.itemId ?? params.item_id ?? "active-assistant");
       const delta = String(params.delta ?? "");
       const existing = coachMessages.find((message) => message.id === itemId);
@@ -660,6 +745,20 @@
 
     if (method === "item/completed") {
       const item = params.item as Record<string, unknown> | undefined;
+      if (item?.type === "mcpToolCall") {
+        const itemId = String(item.id ?? "");
+        const { [itemId]: _completed, ...remaining } = activeCoachTools;
+        activeCoachTools = remaining;
+        const nextTool = Object.values(remaining).at(-1);
+        coachActivity = nextTool
+          ? coachToolLabel(nextTool, true)
+          : {
+              kind: "thinking",
+              label: "Reviewing the tool result",
+              detail: "Sol is connecting the evidence to your question.",
+            };
+        coachDetail = coachActivity.label;
+      }
       if (item?.type === "agentMessage") {
         const itemId = String(item.id ?? "");
         const existing = coachMessages.find((message) => message.id === itemId);
@@ -680,6 +779,8 @@
       for (const message of coachMessages) message.pending = false;
       coachStatus = "ready";
       coachDetail = "Current position synced";
+      coachActivity = null;
+      activeCoachTools = {};
     }
   }
 </script>
@@ -695,39 +796,39 @@
 <svelte:window onkeydown={handleKeyboardNavigation} />
 
 <div class="app-shell">
-  <nav class="rail" aria-label="Primary navigation">
-    <div class="brand-mark">♞</div>
-    <div class="rail-items">
-      <button class="active" type="button" aria-label="Analysis"><span>⌁</span><small>Study</small></button>
-      <button type="button" aria-label="Practice"><span>◈</span><small>Train</small></button>
-      <button type="button" aria-label="Games"><span>▤</span><small>Games</small></button>
-      <button type="button" aria-label="Openings"><span>⌘</span><small>Lines</small></button>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="ChessCave home">
+      <span class="brand-mark" aria-hidden="true">♞</span>
+      <span>ChessCave</span>
+    </a>
+
+    <div class="game-heading">
+      <h1>{matchupTitle}</h1>
+      <p>
+        {eventTitle}
+        {#if currentOpening?.name || game.headers.Opening}
+          <i aria-hidden="true"></i>
+          {currentOpening?.name || game.headers.Opening}
+        {/if}
+      </p>
     </div>
-    <button class="settings" type="button" aria-label="Settings">⚙</button>
-  </nav>
+
+    <div class="top-actions">
+      {#if reviewBusy || variationPositionBusy}
+        <span class="engine-chip working">
+          <i></i>
+          {variationPositionBusy
+            ? "Analyzing variation"
+            : `Reviewing ${reviewProgress?.completed ?? 0}/${reviewProgress?.total ?? game.snapshots.length}`}
+        </span>
+      {:else if review}
+        <span class="engine-chip"><i></i>Review ready</span>
+      {/if}
+      <button type="button" onclick={() => { pgnDraft = ""; importOpen = true; }}>Import game</button>
+    </div>
+  </header>
 
   <main>
-    <header class="topbar">
-      <div>
-        <div class="breadcrumb"><span>ANALYSIS DESK</span><i></i>{currentOpening?.name || game.headers.Opening || "Game study"}</div>
-        <h1>{eventTitle}</h1>
-      </div>
-      <div class="top-actions">
-        <span class:online={engine.available} class="engine-chip">
-          <i></i>{engine.available
-            ? variationPositionBusy
-              ? "Analyzing variation"
-              : reviewBusy
-                ? `Reviewing ${reviewProgress?.completed ?? 0}/${reviewProgress?.total ?? game.snapshots.length}`
-                : review?.cached
-                  ? "Review saved"
-                  : engine.name || "Stockfish"
-            : "Engine offline"}
-        </span>
-        <button type="button" onclick={() => { pgnDraft = ""; importOpen = true; }}>Import PGN</button>
-      </div>
-    </header>
-
     <section class="workspace">
       <div class="study-column">
         <div class="board-stage">
@@ -761,15 +862,26 @@
               onSquareClick={handleSquare}
             />
           </div>
+
           <div class="board-tools">
-            <button type="button" title="Flip board" onclick={() => (flipped = !flipped)}>↻</button>
+            <button type="button" title="Flip board" aria-label="Flip board" onclick={() => (flipped = !flipped)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5.4 8.5A7.5 7.5 0 0 1 18 6.2l1.8 1.9M18.6 15.5A7.5 7.5 0 0 1 6 17.8l-1.8-1.9"></path>
+                <path d="M19.8 3.9v4.2h-4.2M4.2 20.1v-4.2h4.2"></path>
+              </svg>
+            </button>
             <button
               class:working={reviewBusy}
               type="button"
-              title="Re-run the complete game review"
+              title="Refresh full-game review"
+              aria-label="Refresh full-game review"
               disabled={!engine.available || reviewBusy}
               onclick={() => requestGameReview(true)}
-            >✦</button>
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z"></path>
+              </svg>
+            </button>
           </div>
 
           <div class="player-slot bottom-player">
@@ -783,103 +895,30 @@
           </div>
         </div>
 
-        <div class:exploring class="analysis-dock">
-          <div class="dock-head">
-            <div>
-              <span class="meta-label">POSITION</span>
-              <div class="position-title">
-                <strong>{currentLabel}</strong>
-                {#if currentMoveClassification}
-                  <span class={`classification-pill ${currentMoveClassification}`}>
-                    {currentMoveClassification}
-                  </span>
-                {:else if exploring}
-                  <span class="variation-pill">analysis line</span>
-                {/if}
-              </div>
-            </div>
-            <div class="navigation">
-              <button type="button" title="First move" onclick={goToStart} disabled={!exploring && currentPly === 0}>‹‹</button>
-              <button type="button" title="Previous move · Left arrow" onclick={stepBackward} disabled={!canGoBack}>‹</button>
-              <span>{navigationLabel}</span>
-              <button type="button" title="Next move · Right arrow" onclick={stepForward} disabled={!canGoForward}>›</button>
-              <button type="button" title="Last game move" onclick={goToEnd} disabled={!exploring && currentPly === game.moves.length}>››</button>
-            </div>
+        <div class="board-footer">
+          <div class="position-summary">
+            <span>{exploring ? "Variation" : "Current position"}</span>
+            <strong>{currentLabel}</strong>
+            {#if currentMoveClassification}
+              <span class={`classification-pill ${currentMoveClassification}`}>
+                {currentMoveClassification}
+              </span>
+            {:else if exploring}
+              <span class="variation-pill">analysis line</span>
+            {/if}
           </div>
 
-          {#if currentOpening}
-            <div class="opening-band">
-              <MoveBadge kind="book" compact />
-              <div>
-                <span>OPENING · {currentOpening.eco}</span>
-                <strong>{currentOpening.name}</strong>
-              </div>
-              <small>
-                {currentOpening.matchedPly === (exploring ? variation!.rootPly + variationPly! : currentPly)
-                  ? "book position"
-                  : "last known position"}
-              </small>
-            </div>
-          {:else if openingError}
-            <div class="opening-band error">
-              <span>Opening book unavailable</span>
-              <small>{openingError}</small>
-            </div>
-          {/if}
+          <div class="navigation" aria-label="Move navigation">
+            <button type="button" title="First move" aria-label="First move" onclick={goToStart} disabled={!exploring && currentPly === 0}>‹‹</button>
+            <button type="button" title="Previous move · Left arrow" aria-label="Previous move" onclick={stepBackward} disabled={!canGoBack}>‹</button>
+            <span>{navigationLabel}</span>
+            <button type="button" title="Next move · Right arrow" aria-label="Next move" onclick={stepForward} disabled={!canGoForward}>›</button>
+            <button type="button" title="Last game move" aria-label="Last game move" onclick={goToEnd} disabled={!exploring && currentPly === game.moves.length}>››</button>
+          </div>
+        </div>
 
-          {#if bestMoveArrow && bestAlternativeSan}
-            <div class="best-alternative">
-              <span class="suggestion-arrow">➜</span>
-              <div>
-                <span>STOCKFISH ALTERNATIVE</span>
-                <strong>Best was {bestAlternativeSan}</strong>
-              </div>
-              <small>{moveReview?.bestMove}</small>
-            </div>
-          {/if}
-
-          {#if variationError && exploring}
-            <div class="engine-notice error">{variationError}</div>
-          {:else if reviewError && !exploring}
-            <div class="engine-notice error">{reviewError}</div>
-          {:else if !engine.available}
-            <div class="engine-notice">
-              <span>Stockfish is not available yet.</span>
-              <small>{engine.message}</small>
-            </div>
-          {:else if variationPositionBusy && !positionReview}
-            <div class="engine-notice calculating">
-              <span></span>
-              Stockfish is evaluating this variation…
-            </div>
-          {:else if reviewBusy && !positionReview && !exploring}
-            <div class="engine-notice calculating">
-              <span></span>
-              Reviewing the whole game once… {reviewProgress?.completed ?? 0} / {reviewProgress?.total ?? game.snapshots.length}
-            </div>
-          {:else if positionReview?.lines.length}
-            {#if reviewBusy}
-              <div class="review-refresh">
-                Updating full review… {reviewProgress?.completed ?? 0}/{reviewProgress?.total ?? game.snapshots.length}
-              </div>
-            {/if}
-            <div class="lines">
-              {#each positionReview.lines as line}
-                <div class="line">
-                  <span class:mate={line.scoreMate !== null} class="score">
-                    {line.scoreMate !== null
-                      ? `M${Math.abs(line.scoreMate)}`
-                      : `${(line.scoreCp ?? 0) >= 0 ? "+" : ""}${((line.scoreCp ?? 0) / 100).toFixed(2)}`}
-                  </span>
-                  <p>{uciLineToSan(snapshot.fen, line.moves).slice(0, 8).join(" ")}</p>
-                  <small>d{line.depth}</small>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <div class="engine-notice">This game has not been reviewed yet.</div>
-          {/if}
-
+        <div class="move-timeline">
+          <span class="timeline-label">Game</span>
           <MoveList
             moves={game.moves}
             reviews={review?.moves ?? []}
@@ -894,14 +933,149 @@
         </div>
       </div>
 
-      <CoachSidebar
-        messages={coachMessages}
-        status={coachStatus}
-        detail={coachDetail}
-        busy={coachStatus === "thinking"}
-        onSend={askCoach}
-        onNewConversation={startNewCoachConversation}
-      />
+      <section class="study-panel" aria-label="Game study">
+        <header class="panel-header">
+          <div>
+            <span class="panel-kicker">Study</span>
+            <strong>
+              {exploring
+                ? "Exploratory line"
+                : review
+                  ? "Full-game review loaded"
+                  : "Position context"}
+            </strong>
+          </div>
+          <div class="panel-tabs" role="tablist" aria-label="Study mode">
+            <button
+              class:active={studyTab === "review"}
+              type="button"
+              role="tab"
+              aria-selected={studyTab === "review"}
+              onclick={() => (studyTab = "review")}
+            >Review</button>
+            <button
+              class:active={studyTab === "coach"}
+              type="button"
+              role="tab"
+              aria-selected={studyTab === "coach"}
+              onclick={() => (studyTab = "coach")}
+            >Coach</button>
+          </div>
+        </header>
+
+        {#if studyTab === "review"}
+          <div class="review-panel" role="tabpanel">
+            <div class="review-lead">
+              <span>{exploring ? "Exploratory position" : "Position review"}</span>
+              <div>
+                <h2>{currentLabel}</h2>
+                {#if currentMoveClassification}
+                  <span class={`classification-text ${currentMoveClassification}`}>
+                    {currentMoveClassification}
+                  </span>
+                {/if}
+              </div>
+              {#if principal}
+                <p>
+                  Stockfish evaluates this position as
+                  <strong>
+                    {principal.scoreMate !== null
+                      ? `mate in ${Math.abs(principal.scoreMate)}`
+                      : `${(principal.scoreCp ?? 0) >= 0 ? "+" : ""}${((principal.scoreCp ?? 0) / 100).toFixed(2)}`}
+                  </strong>
+                  from White’s perspective.
+                </p>
+              {/if}
+            </div>
+
+            {#if currentOpening}
+            <div class="opening-band">
+              <MoveBadge kind="book" compact />
+              <div>
+                <span>Opening · {currentOpening.eco}</span>
+                <strong>{currentOpening.name}</strong>
+              </div>
+              <small>
+                {currentOpening.matchedPly === (exploring ? variation!.rootPly + variationPly! : currentPly)
+                  ? "book position"
+                  : "last known position"}
+              </small>
+            </div>
+          {:else if openingError}
+            <div class="opening-band error">
+              <span>Opening book unavailable</span>
+              <small>{openingError}</small>
+            </div>
+            {/if}
+
+            {#if bestMoveArrow && bestAlternativeSan}
+            <div class="best-alternative">
+              <span class="suggestion-arrow" aria-hidden="true">→</span>
+              <div>
+                <span>Stockfish alternative</span>
+                <strong>Best was {bestAlternativeSan}</strong>
+              </div>
+            </div>
+            {/if}
+
+            {#if variationError && exploring}
+            <div class="engine-notice error">{variationError}</div>
+            {:else if reviewError && !exploring}
+            <div class="engine-notice error">{reviewError}</div>
+            {:else if !engine.available}
+            <div class="engine-notice">
+              <span>Stockfish is unavailable.</span>
+              <small>{engine.message}</small>
+            </div>
+            {:else if variationPositionBusy && !positionReview}
+            <div class="engine-notice calculating">
+              <span></span>
+              Evaluating this variation…
+            </div>
+            {:else if reviewBusy && !positionReview && !exploring}
+            <div class="engine-notice calculating">
+              <span></span>
+              Reviewing the full game · {reviewProgress?.completed ?? 0}/{reviewProgress?.total ?? game.snapshots.length}
+            </div>
+            {:else if positionReview?.lines.length}
+              {#if reviewBusy}
+              <div class="review-refresh">
+                Updating review · {reviewProgress?.completed ?? 0}/{reviewProgress?.total ?? game.snapshots.length}
+              </div>
+              {/if}
+              <details class="engine-lines">
+                <summary>Engine lines <span>{positionReview.lines.length}</span></summary>
+                <div class="lines">
+                  {#each positionReview.lines as line}
+                    <div class="line">
+                      <span class:mate={line.scoreMate !== null} class="score">
+                        {line.scoreMate !== null
+                          ? `M${Math.abs(line.scoreMate)}`
+                          : `${(line.scoreCp ?? 0) >= 0 ? "+" : ""}${((line.scoreCp ?? 0) / 100).toFixed(2)}`}
+                      </span>
+                      <p>{uciLineToSan(snapshot.fen, line.moves).slice(0, 8).join(" ")}</p>
+                      <small>depth {line.depth}</small>
+                    </div>
+                  {/each}
+                </div>
+              </details>
+            {:else}
+            <div class="engine-notice">This game has not been reviewed yet.</div>
+            {/if}
+          </div>
+        {:else}
+          <CoachSidebar
+            messages={coachMessages}
+            status={coachStatus}
+            detail={coachDetail}
+            activity={coachActivity}
+            contextLabel={`${currentLabel}${review ? " · Full-game review loaded" : ""}`}
+            busy={coachStatus === "thinking"}
+            onSend={askCoach}
+            onNewConversation={startNewCoachConversation}
+          />
+        {/if}
+      </section>
     </section>
   </main>
 </div>
@@ -934,285 +1108,179 @@
 {/if}
 
 <style>
+  /* Glow ethos: one quiet study surface, with the game as the subject. */
   .app-shell {
     position: fixed;
     inset: 0;
-    display: flex;
+    display: grid;
+    grid-template-rows: 68px minmax(0, 1fr);
     width: 100%;
     height: 100%;
     overflow: hidden;
-    color: #e7eae3;
-    background: #191b19;
+    color: var(--ink);
+    background: var(--paper);
   }
 
-  .rail {
-    flex: 0 0 72px;
-    display: flex;
-    flex-direction: column;
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 28px;
     align-items: center;
-    width: 72px;
-    min-width: 72px;
-    height: 100%;
-    padding: 15px 8px 12px;
-    border-right: 1px solid #30342e;
-    background: #20231f;
+    min-height: 68px;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(251, 248, 242, 0.97);
+  }
+
+  .brand {
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: 19px;
+    font-variation-settings: "opsz" 24, "wght" 650;
+    text-decoration: none;
   }
 
   .brand-mark {
     display: grid;
+    width: 34px;
+    height: 34px;
     place-items: center;
-    width: 42px;
-    aspect-ratio: 1;
-    border-radius: 12px;
-    color: #1c2916;
-    background: linear-gradient(145deg, #a6cf89, #719d55);
-    font-size: 25px;
-    box-shadow: 0 8px 22px rgba(86, 126, 58, 0.21);
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    color: var(--coral-dark);
+    background: var(--pearl-raised);
+    box-shadow: none;
+    font-family: Georgia, serif;
+    font-size: 20px;
   }
 
-  .rail-items {
-    display: grid;
-    gap: 9px;
-    width: 100%;
-    margin-top: 26px;
-  }
-
-  .rail button {
-    display: grid;
-    place-items: center;
-    gap: 2px;
-    min-height: 52px;
-    border: 0;
-    border-radius: 10px;
-    color: #747a71;
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .rail button span {
-    font-size: 19px;
-  }
-
-  .rail button small {
-    font-size: 8px;
-    font-weight: 750;
-  }
-
-  .rail button:hover,
-  .rail button.active {
-    color: #acd190;
-    background: #2c3229;
-  }
-
-  .rail .settings {
-    margin-top: auto;
-    font-size: 17px;
-  }
-
-  main {
-    flex: 1 1 auto;
-    display: grid;
-    grid-template-rows: 74px 1fr;
-    width: calc(100% - 72px);
+  .game-heading {
     min-width: 0;
-    min-height: 0;
+    padding-left: 25px;
+    border-left: 1px solid var(--line);
+  }
+
+  .game-heading h1 {
+    margin: 0;
     overflow: hidden;
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: 16px;
+    font-variation-settings: "opsz" 18, "wght" 610;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 22px 9px 25px;
-    border-bottom: 1px solid #31352f;
-    background: #222521;
-  }
-
-  .breadcrumb {
+  .game-heading p {
     display: flex;
     gap: 8px;
     align-items: center;
-    color: #777e74;
-    font-size: 9px;
-    font-weight: 750;
-    letter-spacing: 0.08em;
+    margin: 3px 0 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .breadcrumb span {
-    color: #91ad80;
-  }
-
-  .breadcrumb i {
+  .game-heading i {
+    flex: 0 0 3px;
     width: 3px;
     height: 3px;
-    border-radius: 99px;
-    background: #555b52;
-  }
-
-  h1 {
-    margin: 3px 0 0;
-    color: #eef0eb;
-    font-family: Georgia, serif;
-    font-size: 21px;
-    font-weight: 650;
+    border-radius: 50%;
+    background: var(--line-strong);
   }
 
   .top-actions {
     display: flex;
-    gap: 10px;
+    gap: 16px;
     align-items: center;
   }
 
   .top-actions > button {
-    padding: 9px 13px;
-    border: 1px solid #42473f;
-    border-radius: 8px;
-    color: #d9ddd5;
-    background: #2c302b;
-    font-size: 11px;
-    font-weight: 700;
+    min-height: 36px;
+    padding: 0 15px;
+    border: 1px solid var(--ink);
+    border-radius: 999px;
+    color: var(--pearl-raised);
+    background: var(--ink);
+    font-size: 12px;
+    font-weight: 650;
     cursor: pointer;
   }
 
   .top-actions > button:hover {
-    border-color: #65795a;
+    border-color: var(--coral-dark);
+    background: var(--coral-dark);
   }
 
   .engine-chip {
-    display: flex;
-    gap: 6px;
+    display: inline-flex;
+    gap: 7px;
     align-items: center;
-    color: #888f85;
-    font-size: 9px;
-    font-weight: 700;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 550;
   }
 
   .engine-chip i {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #6d716b;
+    background: var(--sage);
   }
 
-  .engine-chip.online {
-    color: #9fb794;
+  .engine-chip.working i {
+    background: var(--coral);
+    animation: pulse 900ms ease-in-out infinite alternate;
   }
 
-  .engine-chip.online i {
-    background: #8ab86d;
-    box-shadow: 0 0 0 4px rgba(138, 184, 109, 0.08);
+  main {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .workspace {
     display: grid;
-    grid-template-columns: minmax(570px, 1fr) 350px;
+    grid-template-columns: minmax(560px, 1fr) minmax(370px, 420px);
+    width: 100%;
+    height: 100%;
     min-height: 0;
     overflow: hidden;
   }
 
   .study-column {
+    --board-size: min(660px, calc(100vh - 270px), calc(100vw - 540px));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     min-width: 0;
     min-height: 0;
     overflow: auto;
-    padding: 15px clamp(18px, 3vw, 42px) 20px;
-    scrollbar-color: #454a43 transparent;
-    background:
-      radial-gradient(circle at 43% 31%, rgba(75, 94, 65, 0.14), transparent 42%),
-      #1c1f1c;
-  }
-
-  .meta-label {
-    display: block;
-    margin-bottom: 3px;
-    color: #7d9870;
-    font-size: 8px;
-    font-weight: 850;
-    letter-spacing: 0.14em;
-  }
-
-  .dock-head strong {
-    color: #cfd3ca;
-    font-size: 11px;
-  }
-
-  .position-title {
-    display: flex;
-    gap: 7px;
-    align-items: center;
-  }
-
-  .classification-pill {
-    padding: 2px 6px;
-    border-radius: 999px;
-    color: #d7ddd2;
-    background: #3c4339;
-    font-size: 7px;
-    font-weight: 850;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .variation-pill {
-    padding: 2px 6px;
-    border: 1px solid #617654;
-    border-radius: 999px;
-    color: #b7d2a7;
-    background: #303a2d;
-    font-size: 7px;
-    font-weight: 850;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .classification-pill.great,
-  .classification-pill.best {
-    color: #eff8e9;
-    background: #56863e;
-  }
-
-  .classification-pill.excellent {
-    color: #eff7ec;
-    background: #6c9660;
-  }
-
-  .classification-pill.good {
-    color: #e8efdf;
-    background: #60765a;
-  }
-
-  .classification-pill.book {
-    color: #fff9ee;
-    background: #8f7558;
-  }
-
-  .classification-pill.inaccuracy {
-    color: #282218;
-    background: #d8ba65;
-  }
-
-  .classification-pill.mistake {
-    color: #291b16;
-    background: #dc965f;
-  }
-
-  .classification-pill.blunder {
-    color: #fff0ed;
-    background: #b9554b;
+    padding: 16px 24px 18px;
+    scrollbar-color: var(--line-strong) transparent;
+    background: var(--paper);
   }
 
   .board-stage {
     display: grid;
-    grid-template-columns: 28px auto 30px;
-    grid-template-rows: auto auto auto;
-    column-gap: 8px;
-    row-gap: 4px;
+    grid-template-columns: 28px var(--board-size) 32px;
+    grid-template-rows: auto var(--board-size) auto;
+    column-gap: 9px;
+    row-gap: 5px;
     justify-content: center;
-    width: 100%;
+    width: auto;
   }
 
   .player-slot {
     grid-column: 2;
-    min-width: 0;
   }
 
   .top-player {
@@ -1224,19 +1292,16 @@
   }
 
   .evaluation-slot {
-    display: flex;
     grid-column: 1;
     grid-row: 2;
-    align-items: stretch;
   }
 
   .board-wrap {
     grid-column: 2;
     grid-row: 2;
-    width: min(640px, calc(100vh - 360px), calc(100vw - 520px));
-    min-width: 320px;
-    max-width: 100%;
-    aspect-ratio: 1;
+    width: var(--board-size);
+    min-width: 0;
+    max-width: none;
   }
 
   .board-tools {
@@ -1244,251 +1309,383 @@
     grid-column: 3;
     grid-row: 2;
     align-content: start;
-    gap: 7px;
+    gap: 8px;
   }
 
   .board-tools button {
     display: grid;
+    width: 32px;
+    height: 32px;
     place-items: center;
-    width: 30px;
-    height: 30px;
-    border: 1px solid #3a3f38;
-    border-radius: 7px;
-    color: #939a90;
-    background: #292d28;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--ink-soft);
+    background: var(--pearl);
     cursor: pointer;
   }
 
   .board-tools button:hover:not(:disabled) {
-    color: #b6d49f;
-    border-color: #617a52;
+    color: var(--coral-dark);
+    border-color: var(--coral);
+    background: var(--coral-soft);
   }
 
   .board-tools button:disabled {
-    opacity: 0.36;
+    opacity: 0.38;
   }
 
-  .board-tools button.working {
-    animation: pulse 900ms infinite alternate;
+  .board-tools svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.7;
   }
 
-  .analysis-dock {
-    width: min(calc(100% - 74px), 640px, calc(100vh - 360px));
-    min-width: 320px;
-    margin: 12px auto 0;
-    overflow: hidden;
-    border: 1px solid #353a33;
-    border-radius: 10px;
-    background: #242723;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.13);
+  .board-tools button:last-child svg {
+    fill: currentColor;
+    stroke: none;
   }
 
-  .analysis-dock.exploring {
-    border-color: #596c4f;
-  }
-
-  .dock-head {
+  .board-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 9px 12px;
-    border-bottom: 1px solid #353a33;
+    width: var(--board-size);
+    min-height: 47px;
+    margin: 8px 0 0;
+    border-bottom: 1px solid var(--line);
   }
 
-  .opening-band {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+  .position-summary {
+    display: flex;
     gap: 8px;
     align-items: center;
-    min-height: 42px;
-    padding: 6px 11px;
-    border-bottom: 1px solid #3a3931;
-    background: linear-gradient(90deg, #302b24, #292a25);
-  }
-
-  .opening-band > div {
-    display: grid;
     min-width: 0;
   }
 
-  .opening-band div span {
-    color: #a9957c;
-    font-size: 7px;
-    font-weight: 850;
-    letter-spacing: 0.1em;
+  .position-summary > span:first-child {
+    color: var(--muted);
+    font-size: 11px;
   }
 
-  .opening-band strong {
-    overflow: hidden;
-    color: #ded8cd;
+  .position-summary strong {
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .classification-pill,
+  .variation-pill {
+    padding: 3px 7px;
+    border: 0;
+    border-radius: 999px;
+    color: var(--ink-soft);
+    background: var(--sage-soft);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: capitalize;
+  }
+
+  .classification-pill.book {
+    color: #755c3e;
+    background: #eee3d4;
+  }
+
+  .classification-pill.inaccuracy {
+    color: #79581f;
+    background: #f3e5bf;
+  }
+
+  .classification-pill.mistake,
+  .classification-pill.miss,
+  .classification-pill.blunder {
+    color: var(--coral-dark);
+    background: var(--coral-soft);
+  }
+
+  .navigation {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+  }
+
+  .navigation button {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border: 0;
+    border-radius: 50%;
+    color: var(--ink-soft);
+    background: transparent;
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  .navigation button:hover:not(:disabled) {
+    color: var(--coral-dark);
+    background: var(--coral-soft);
+  }
+
+  .navigation button:disabled {
+    opacity: 0.26;
+  }
+
+  .navigation span {
+    min-width: 54px;
+    color: var(--muted);
     font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  .move-timeline {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    width: var(--board-size);
+    min-height: 54px;
+  }
+
+  .timeline-label {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .study-panel {
+    display: grid;
+    grid-template-rows: 74px minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border-left: 1px solid var(--line);
+    background: var(--pearl);
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .panel-header > div:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .panel-kicker {
+    color: var(--coral-dark);
+    font-size: 9px;
+    font-weight: 750;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .panel-header strong {
+    overflow: hidden;
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .panel-tabs {
+    display: flex;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--paper);
+  }
+
+  .panel-tabs button {
+    min-height: 29px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
+    color: var(--muted);
+    background: transparent;
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .panel-tabs button.active {
+    color: var(--pearl-raised);
+    background: var(--ink);
+  }
+
+  .review-panel {
+    min-height: 0;
+    overflow: auto;
+    padding: 28px 24px 40px;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
+  .review-lead {
+    padding-bottom: 25px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .review-lead > span {
+    color: var(--coral-dark);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .review-lead > div {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    margin-top: 6px;
+  }
+
+  .review-lead h2 {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: clamp(24px, 2vw, 31px);
+    font-variation-settings: "opsz" 32, "wght" 580;
+    line-height: 1.1;
+  }
+
+  .review-lead p {
+    max-width: 34ch;
+    margin: 13px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .review-lead p strong {
+    color: var(--ink);
+  }
+
+  .classification-text {
+    color: var(--sage);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: capitalize;
+  }
+
+  .classification-text.inaccuracy {
+    color: var(--ochre);
+  }
+
+  .classification-text.mistake,
+  .classification-text.miss,
+  .classification-text.blunder {
+    color: var(--coral-dark);
+  }
+
+  .opening-band,
+  .best-alternative {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 11px;
+    align-items: center;
+    min-height: 66px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
+  }
+
+  .opening-band > div,
+  .best-alternative > div {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .opening-band div span,
+  .best-alternative div span {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .opening-band strong,
+  .best-alternative strong {
+    overflow: hidden;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .opening-band small {
-    color: #81786b;
-    font-size: 8px;
+    color: var(--faint);
+    font-size: 9px;
     white-space: nowrap;
   }
 
   .opening-band.error {
-    grid-template-columns: minmax(0, 1fr) auto;
-    color: #dc8b7b;
-    background: #302522;
-    font-size: 9px;
+    grid-template-columns: minmax(0, 1fr);
+    color: var(--danger);
+    background: transparent;
   }
 
   .best-alternative {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 8px;
-    align-items: center;
-    min-height: 39px;
-    padding: 6px 11px;
-    border-bottom: 1px solid #384333;
-    background: linear-gradient(90deg, #293326, #292d27);
-  }
-
-  .best-alternative > div {
-    display: grid;
-    min-width: 0;
+    grid-template-columns: auto minmax(0, 1fr);
+    margin-top: 18px;
+    padding: 14px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--coral-soft);
   }
 
   .best-alternative div span {
-    color: #89aa70;
-    font-size: 7px;
-    font-weight: 850;
-    letter-spacing: 0.1em;
-  }
-
-  .best-alternative strong {
-    color: #dce9d4;
-    font-size: 10px;
-  }
-
-  .best-alternative small {
-    color: #74806f;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 8px;
+    color: var(--coral-dark);
   }
 
   .suggestion-arrow {
     display: grid;
+    width: 28px;
+    height: 28px;
     place-items: center;
-    width: 20px;
-    height: 20px;
+    border: 1px solid rgba(159, 78, 59, 0.25);
     border-radius: 50%;
-    color: #eff9e9;
-    background: #719e4f;
-    font-size: 13px;
-    font-weight: 900;
-  }
-
-  .navigation {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .navigation button {
-    display: grid;
-    place-items: center;
-    width: 25px;
-    height: 24px;
-    border: 0;
-    border-radius: 5px;
-    color: #a7aca4;
-    background: #30342f;
-    cursor: pointer;
-  }
-
-  .navigation button:hover:not(:disabled) {
-    color: #d9e4d2;
-    background: #3a4336;
-  }
-
-  .navigation button:disabled {
-    opacity: 0.33;
-  }
-
-  .navigation span {
-    min-width: 54px;
-    color: #7f857c;
-    font-size: 9px;
-    text-align: center;
-  }
-
-  .lines {
-    display: grid;
-    gap: 1px;
-    padding: 6px;
-    border-bottom: 1px solid #343932;
-  }
-
-  .review-refresh {
-    padding: 5px 10px;
-    border-bottom: 1px solid #343932;
-    color: #91ad80;
-    background: #293027;
-    font-size: 8px;
-    font-weight: 750;
-    text-align: center;
-  }
-
-  .line {
-    display: grid;
-    grid-template-columns: 47px 1fr 30px;
-    gap: 7px;
-    align-items: center;
-    min-height: 27px;
-    padding: 0 6px;
-    border-radius: 5px;
-    color: #b8bdb4;
-    background: #292d28;
-    font-size: 10px;
-  }
-
-  .line .score {
-    color: #d7dfd1;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .line .score.mate {
-    color: #e5b96a;
-  }
-
-  .line p {
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .line small {
-    color: #6f756c;
-    text-align: right;
+    color: var(--coral-dark);
+    background: transparent;
+    font-size: 16px;
   }
 
   .engine-notice {
     display: grid;
-    min-height: 52px;
+    min-height: 92px;
     place-content: center;
-    gap: 3px;
-    padding: 8px;
-    border-bottom: 1px solid #343932;
-    color: #a0a69c;
-    font-size: 10px;
+    gap: 4px;
+    padding: 18px 0;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
     text-align: center;
   }
 
   .engine-notice small {
-    color: #6f756c;
+    color: var(--faint);
   }
 
   .engine-notice.error {
-    color: #dc8b7b;
+    color: var(--danger);
   }
 
   .engine-notice.calculating {
@@ -1500,8 +1697,106 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #8ab86d;
+    background: var(--coral);
     animation: pulse 700ms infinite alternate;
+  }
+
+  .review-refresh {
+    margin-top: 18px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--muted);
+    background: var(--paper);
+    font-size: 10px;
+    text-align: center;
+  }
+
+  .engine-lines {
+    margin-top: 22px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .engine-lines summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 48px;
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 650;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .engine-lines summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .engine-lines summary::after {
+    content: "+";
+    color: var(--coral-dark);
+    font-size: 18px;
+    font-weight: 400;
+  }
+
+  .engine-lines[open] summary::after {
+    content: "−";
+  }
+
+  .engine-lines summary span {
+    margin-left: auto;
+    margin-right: 10px;
+    color: var(--faint);
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .lines {
+    display: grid;
+    gap: 0;
+    padding: 0 0 8px;
+    border: 0;
+  }
+
+  .line {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 9px;
+    align-items: start;
+    min-height: 0;
+    padding: 10px 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    color: var(--ink-soft);
+    background: transparent;
+    font-size: 11px;
+  }
+
+  .line .score {
+    color: var(--ink);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .line .score.mate {
+    color: var(--coral-dark);
+  }
+
+  .line p {
+    margin: 0;
+    overflow: hidden;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: normal;
+  }
+
+  .line small {
+    grid-column: 2;
+    color: var(--faint);
+    font-size: 9px;
+    text-align: left;
   }
 
   .modal-backdrop {
@@ -1511,65 +1806,88 @@
     display: grid;
     place-items: center;
     padding: 20px;
-    background: rgba(7, 9, 7, 0.72);
-    backdrop-filter: blur(8px);
+    background: rgba(55, 47, 40, 0.42);
+    backdrop-filter: blur(5px);
   }
 
   .modal {
     width: min(580px, 100%);
-    padding: 20px;
-    border: 1px solid #42483f;
-    border-radius: 15px;
-    background: #252925;
-    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.42);
+    padding: 24px;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    color: var(--ink);
+    background: var(--pearl-raised);
+    box-shadow: 0 30px 90px rgba(69, 54, 43, 0.18);
   }
 
-  .modal-head {
-    display: flex;
-    justify-content: space-between;
+  .meta-label {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--coral-dark);
+    font-size: 9px;
+    letter-spacing: 0.1em;
   }
 
   .modal h2 {
     margin: 0;
-    color: #eef0eb;
-    font-family: Georgia, serif;
-    font-size: 23px;
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: 27px;
+    font-variation-settings: "opsz" 30, "wght" 580;
   }
 
   .modal-head button {
-    width: 31px;
-    height: 31px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
     border: 0;
-    border-radius: 8px;
-    color: #a6aca2;
-    background: #333832;
-    font-size: 21px;
+    border-radius: 50%;
+    color: var(--ink-soft);
+    background: var(--paper);
+    font-size: 20px;
     cursor: pointer;
+  }
+
+  .modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
   }
 
   .modal > p {
     margin: 12px 0;
-    color: #92988f;
-    font-size: 11px;
+    color: var(--muted);
+    font-size: 13px;
     line-height: 1.55;
   }
 
   .modal textarea {
     width: 100%;
     resize: vertical;
-    border: 1px solid #3e443c;
+    padding: 12px;
+    border: 1px solid var(--line);
     border-radius: 10px;
     outline: 0;
-    padding: 12px;
-    color: #dfe3db;
-    background: #1d201d;
+    border-color: var(--line);
+    color: var(--ink);
+    background: var(--pearl);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.55;
   }
 
   .modal textarea:focus {
-    border-color: #698356;
+    border-color: var(--coral);
+  }
+
+  .modal-actions button {
+    padding: 9px 13px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    border-color: var(--line-strong);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
   }
 
   .modal-actions {
@@ -1578,35 +1896,26 @@
     margin-top: 12px;
   }
 
-  .modal-actions button {
-    padding: 9px 13px;
-    border: 1px solid #42483f;
-    border-radius: 8px;
-    font-size: 10px;
-    font-weight: 750;
-    cursor: pointer;
-  }
-
   .modal-actions .secondary {
-    color: #bdc2b9;
-    background: #30342f;
+    color: var(--ink-soft);
+    background: transparent;
   }
 
   .modal-actions .primary {
-    color: #162010;
-    border-color: #8cb56f;
-    background: #92bc74;
+    color: var(--pearl-raised);
+    border-color: var(--ink);
+    background: var(--ink);
+  }
+
+  .import-error {
+    margin-top: 8px;
+    color: var(--danger);
+    font-size: 11px;
   }
 
   .modal-actions button:disabled {
     cursor: not-allowed;
     opacity: 0.4;
-  }
-
-  .import-error {
-    margin-top: 8px;
-    color: #dc8b7b;
-    font-size: 10px;
   }
 
   @keyframes pulse {
@@ -1615,44 +1924,139 @@
     }
   }
 
-  @media (max-width: 1080px) {
+  @media (max-width: 1180px) {
     .workspace {
-      grid-template-columns: minmax(500px, 1fr) 320px;
+      grid-template-columns: minmax(500px, 1fr) 370px;
     }
 
     .study-column {
-      padding-inline: 16px;
+      --board-size: min(620px, calc(100vh - 270px), calc(100vw - 475px));
+      padding-inline: 14px;
+    }
+
+    .topbar {
+      gap: 18px;
+      padding-inline: 20px;
+    }
+
+    .game-heading {
+      padding-left: 18px;
     }
   }
 
-  @media (max-width: 820px) {
-    .rail {
-      display: none;
+  @media (max-width: 900px) {
+    .app-shell {
+      grid-template-rows: 68px minmax(0, 1fr);
     }
 
     main {
-      width: 100%;
-    }
-
-    .workspace {
-      grid-template-columns: 1fr;
       overflow: auto;
     }
 
-    .study-column {
+    .workspace {
+      grid-template-columns: minmax(0, 1fr);
+      height: auto;
       overflow: visible;
     }
 
-    .board-wrap {
-      width: min(640px, calc(100vw - 110px));
+    .study-column {
+      --board-size: min(640px, calc(100vw - 90px), calc(100vh - 235px));
+      min-height: calc(100vh - 68px);
+      overflow: visible;
     }
 
-    .analysis-dock {
-      width: min(640px, calc(100vw - 110px));
+    .study-panel {
+      min-height: 680px;
+      border-top: 1px solid var(--line);
+      border-left: 0;
     }
 
-    :global(.coach) {
-      min-height: 620px;
+    .review-panel {
+      padding-inline: max(24px, calc((100vw - 640px) / 2));
+    }
+  }
+
+  @media (max-width: 640px) {
+    .app-shell {
+      grid-template-rows: 62px minmax(0, 1fr);
+    }
+
+    .topbar {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      min-height: 62px;
+      padding: 0 12px;
+    }
+
+    .brand > span:last-child,
+    .game-heading p,
+    .engine-chip {
+      display: none;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+    }
+
+    .game-heading {
+      padding-left: 12px;
+    }
+
+    .game-heading h1 {
+      font-size: 14px;
+    }
+
+    .top-actions > button {
+      min-height: 32px;
+      padding-inline: 11px;
+      font-size: 11px;
+    }
+
+    .study-column {
+      --board-size: min(calc(100vw - 62px), calc(100vh - 245px));
+      min-height: calc(100vh - 62px);
+      padding: 12px 6px 16px;
+    }
+
+    .board-stage {
+      grid-template-columns: 24px var(--board-size) 28px;
+      column-gap: 5px;
+    }
+
+    .board-tools button {
+      width: 28px;
+      height: 28px;
+    }
+
+    .board-footer {
+      min-height: 52px;
+    }
+
+    .position-summary > span:first-child {
+      display: none;
+    }
+
+    .navigation button:first-child,
+    .navigation button:last-child {
+      display: none;
+    }
+
+    .move-timeline {
+      grid-template-columns: 1fr;
+      gap: 0;
+      padding-top: 5px;
+    }
+
+    .timeline-label {
+      display: none;
+    }
+
+    .panel-header {
+      padding-inline: 14px;
+    }
+
+    .review-panel {
+      padding: 24px 18px 36px;
     }
   }
 </style>

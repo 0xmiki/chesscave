@@ -69,4 +69,26 @@
     bottom: 7px;
     color: #20211f;
   }
+
+  .evaluation {
+    width: 28px;
+    min-height: 240px;
+    border-radius: 5px;
+    background: #403a34;
+    box-shadow: 0 0 0 1px rgba(41, 36, 31, 0.12);
+  }
+
+  .white {
+    background: var(--pearl-raised);
+  }
+
+  .score {
+    color: var(--pearl-raised);
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  .score.in-white {
+    color: var(--ink);
+  }
 </style>

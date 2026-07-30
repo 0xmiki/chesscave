@@ -15,7 +15,7 @@ use tokio::{
     time::{timeout, Duration},
 };
 
-pub(crate) const REVIEW_SCHEMA_VERSION: u8 = 1;
+pub(crate) const REVIEW_SCHEMA_VERSION: u8 = 2;
 const DEFAULT_REVIEW_NODES: u64 = 60_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,9 +51,25 @@ pub struct AnalysisResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ReviewClocks {
+    pub w: Option<f64>,
+    pub b: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewLastMove {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReviewPositionInput {
     pub ply: u16,
     pub fen: String,
+    pub clocks: ReviewClocks,
+    pub last_move: Option<ReviewLastMove>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +86,8 @@ pub struct ReviewMoveInput {
 pub struct PositionReview {
     pub ply: u16,
     pub fen: String,
+    pub clocks: ReviewClocks,
+    pub last_move: Option<ReviewLastMove>,
     pub best_move: Option<String>,
     pub elapsed_ms: u128,
     pub lines: Vec<EngineLine>,
@@ -414,6 +432,8 @@ async fn analyze_with_process(
     Ok(PositionReview {
         ply,
         fen,
+        clocks: ReviewClocks { w: None, b: None },
+        last_move: None,
         best_move,
         elapsed_ms: started.elapsed().as_millis(),
         lines: latest.into_values().collect(),
@@ -691,7 +711,7 @@ pub async fn review_game(
     let mut analyzed = Vec::with_capacity(total);
     for (index, input) in positions.into_iter().enumerate() {
         let ply = input.ply;
-        let result = timeout(
+        let mut result = timeout(
             Duration::from_secs(90),
             analyze_with_process(
                 &mut process,
@@ -702,6 +722,8 @@ pub async fn review_game(
         )
         .await
         .map_err(|_| format!("Stockfish timed out while reviewing ply {ply}."))??;
+        result.clocks = input.clocks;
+        result.last_move = input.last_move;
         analyzed.push(result);
         let _ = app.emit(
             "chesscave://review-progress",
@@ -784,6 +806,8 @@ mod tests {
         let position = |ply, wdl, best_move: &str| PositionReview {
             ply,
             fen: String::new(),
+            clocks: super::ReviewClocks { w: None, b: None },
+            last_move: None,
             best_move: Some(best_move.to_string()),
             elapsed_ms: 1,
             lines: vec![super::EngineLine {
