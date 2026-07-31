@@ -52,6 +52,57 @@ export function buildVisiblePageTree(
   return visible;
 }
 
+export function collectPageSubtreeIds(
+  pages: NoteBlockRecord[],
+  pageId: string,
+): string[] {
+  const pagesById = new Map(
+    pages
+      .filter((page) => page.type === "page")
+      .map((page) => [page.id, page]),
+  );
+  const ordered: string[] = [];
+  const visited = new Set<string>();
+  const stack = [pageId];
+
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (visited.has(id)) continue;
+    const page = pagesById.get(id);
+    if (!page) continue;
+    visited.add(id);
+    ordered.push(id);
+    for (const childId of page.content.toReversed()) {
+      if (pagesById.has(childId)) stack.push(childId);
+    }
+  }
+
+  return ordered;
+}
+
+export function deletionFallbackPageId(
+  rootPageIds: string[],
+  pages: NoteBlockRecord[],
+  pageId: string,
+): string | null {
+  const deleted = new Set(collectPageSubtreeIds(pages, pageId));
+  const target = pages.find((page) => page.id === pageId);
+  if (target?.parentId && !deleted.has(target.parentId)) {
+    return target.parentId;
+  }
+
+  const rootIndex = rootPageIds.indexOf(pageId);
+  if (rootIndex >= 0) {
+    const next = rootPageIds.slice(rootIndex + 1).find((id) => !deleted.has(id));
+    if (next) return next;
+    const previous = rootPageIds.slice(0, rootIndex).toReversed()
+      .find((id) => !deleted.has(id));
+    if (previous) return previous;
+  }
+
+  return rootPageIds.find((id) => !deleted.has(id)) ?? null;
+}
+
 export function resolvePageTreeKey(
   key: string,
   index: number,

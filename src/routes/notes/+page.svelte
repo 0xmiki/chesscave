@@ -1,13 +1,32 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import AppHeader from "$lib/components/AppHeader.svelte";
   import NotePageTree from "$lib/components/NotePageTree.svelte";
   import ParagraphBlockEditor from "$lib/components/ParagraphBlockEditor.svelte";
+  import {
+    insertParagraph,
+    mergeParagraphBackward,
+    noteBlockText,
+    pastePlainText,
+    replaceParagraphText,
+    splitParagraph,
+    textProperties,
+    trailingParagraph,
+    type EditorChange,
+    type EditorSelection,
+  } from "$lib/notes/editor";
   import { NotesSaveQueue, type NotesSaveState } from "$lib/notes/save-queue";
-  import { notePageTitle } from "$lib/notes/tree";
+  import { createPageTransaction } from "$lib/notes/page-operations";
+  import {
+    collectPageSubtreeIds,
+    deletionFallbackPageId,
+    notePageTitle,
+  } from "$lib/notes/tree";
   import IconArrowRightRegular from "phosphor-icons-svelte/IconArrowRightRegular.svelte";
+  import IconArrowClockwiseRegular from "phosphor-icons-svelte/IconArrowClockwiseRegular.svelte";
+  import IconArrowCounterClockwiseRegular from "phosphor-icons-svelte/IconArrowCounterClockwiseRegular.svelte";
   import IconCheckCircleRegular from "phosphor-icons-svelte/IconCheckCircleRegular.svelte";
   import IconFileTextRegular from "phosphor-icons-svelte/IconFileTextRegular.svelte";
   import IconListRegular from "phosphor-icons-svelte/IconListRegular.svelte";
@@ -18,6 +37,7 @@
     type NoteBlockRecord,
     type NoteOperation,
     type NotesPageChunk,
+    type NotesTransactionResult,
   } from "$lib/notes/types";
   import {
     applyNotesTransaction,
@@ -29,6 +49,13 @@
 
   const nativeHost = hasNativeHost();
   const saveQueue = new NotesSaveQueue(applyNotesTransaction);
+  interface TypingSession {
+    before: NotesPageChunk;
+    beforeOffset: number;
+    afterOffset: number;
+    timer: ReturnType<typeof setTimeout> | null;
+  }
+
   let pages = $state<NoteBlockRecord[]>([]);
   let rootPageIds = $state<string[]>([]);
   let expandedIds = $state<string[]>([]);
@@ -44,26 +71,58 @@
     error: null,
   });
   let pageLoadCycle = 0;
-  let blockPreviewElement = $state<HTMLDivElement>();
+  let pageTitleElement = $state<HTMLTextAreaElement>();
+  let focusRequest = $state<
+    (EditorSelection & { token: number }) | null
+  >(null);
+  let undoStack = $state<EditorChange[]>([]);
+  let redoStack = $state<EditorChange[]>([]);
+  let typingActive = $state(false);
+  let focusToken = 0;
+  const typingSessions = new Map<string, TypingSession>();
+  const pendingDocuments = new Map<string, NotesPageChunk>();
+  const historyByPage = new Map<
+    string,
+    { undo: EditorChange[]; redo: EditorChange[] }
+  >();
 
   const requestedPageId = $derived(page.url.searchParams.get("page"));
   const selectedPage = $derived(
     pages.find((candidate) => candidate.id === requestedPageId) ?? null,
   );
+  const activePageChunk = $derived(
+    pageChunk?.rootId === selectedPage?.id ? pageChunk : null,
+  );
+  const selectedRoot = $derived(
+    activePageChunk?.blocks.find(
+      (block) => block.id === activePageChunk.rootId,
+    ) ??
+      selectedPage,
+  );
   const chunkBlocks = $derived(
-    new Map((pageChunk?.blocks ?? []).map((block) => [block.id, block])),
+    new Map((activePageChunk?.blocks ?? []).map((block) => [block.id, block])),
   );
   const selectedContent = $derived(
-    selectedPage
-      ? selectedPage.content
+    selectedRoot
+      ? selectedRoot.content
           .map((id) => chunkBlocks.get(id) ?? pages.find((item) => item.id === id))
           .filter((block): block is NoteBlockRecord => Boolean(block))
       : [],
   );
+  $effect(() => {
+    const title = selectedPage ? notePageTitle(selectedPage) : "";
+    void title;
+    void tick().then(() => {
+      if (pageTitleElement) resizePageTitle(pageTitleElement);
+    });
+  });
 
   onMount(() => {
     const unsubscribe = saveQueue.subscribe((state) => {
       saveState = state;
+      if (state.status === "saved" && state.pending === 0) {
+        pendingDocuments.clear();
+      }
     });
     try {
       const saved = localStorage.getItem("chesscave.notes.expanded.v1");
@@ -72,7 +131,10 @@
       localStorage.removeItem("chesscave.notes.expanded.v1");
     }
     void initialize();
-    return unsubscribe;
+    return () => {
+      finalizeAllTyping();
+      unsubscribe();
+    };
   });
 
   $effect(() => {
@@ -127,7 +189,26 @@
     pageLoading = true;
     try {
       const next = await loadNotesPage(id);
-      if (cycle === pageLoadCycle) pageChunk = next;
+      if (cycle === pageLoadCycle) {
+        clearTypingSessions();
+        const pending = pendingDocuments.get(id);
+        const sidebarPage = pages.find((block) => block.id === id);
+        const loaded = pending ?? next;
+        pageChunk = sidebarPage
+          ? {
+              ...loaded,
+              blocks: loaded.blocks.map((block) =>
+                block.id === id
+                  ? { ...block, properties: sidebarPage.properties }
+                  : block,
+              ),
+            }
+          : loaded;
+        const history = historyByPage.get(id);
+        undoStack = history?.undo ?? [];
+        redoStack = history?.redo ?? [];
+        focusRequest = null;
+      }
     } catch (cause) {
       if (cycle === pageLoadCycle) {
         error = cause instanceof Error ? cause.message : String(cause);
@@ -138,6 +219,9 @@
   }
 
   function selectPage(id: string, replaceState = false) {
+    finalizeAllTyping();
+    cacheCurrentDocument();
+    cacheCurrentHistory();
     drawerOpen = false;
     const url = new URL(page.url);
     url.searchParams.set("page", id);
@@ -181,28 +265,14 @@
     if (mutationBusy || !nativeHost) return;
     mutationBusy = true;
     error = "";
-    const nextPage = createNoteBlock("page", "Untitled");
-    const paragraph = createNoteBlock("paragraph");
     const parent = parentId
       ? pages.find((candidate) => candidate.id === parentId)
       : null;
     const index = parent ? parent.content.length : rootPageIds.length;
-    const operations: NoteOperation[] = [
-      { kind: "createBlock", block: nextPage },
-      { kind: "createBlock", block: paragraph },
-      {
-        kind: "insertChild",
-        parentId,
-        childId: nextPage.id,
-        index,
-      },
-      {
-        kind: "insertChild",
-        parentId: nextPage.id,
-        childId: paragraph.id,
-        index: 0,
-      },
-    ];
+    const { page: nextPage, operations } = createPageTransaction(
+      parentId,
+      index,
+    );
 
     try {
       await saveQueue.enqueue(operations);
@@ -221,28 +291,40 @@
     }
   }
 
-  async function renamePage(id: string, title: string) {
-    const current = pages.find((candidate) => candidate.id === id);
-    if (!current || mutationBusy) return;
-    const normalized = title.trim() || "Untitled";
-    if (normalized === notePageTitle(current)) return;
+  async function deletePage(id: string) {
+    if (mutationBusy || !nativeHost) return;
+    finalizeAllTyping();
+    const deletedPageIds = collectPageSubtreeIds(pages, id);
+    if (!deletedPageIds.length) return;
+    const deleted = new Set(deletedPageIds);
+    const selectedId = selectedPage?.id ?? null;
+    const selectedWasDeleted = Boolean(selectedId && deleted.has(selectedId));
+    const fallbackId = deletionFallbackPageId(rootPageIds, pages, id);
     mutationBusy = true;
     error = "";
 
     try {
-      await saveQueue.enqueue([
-        {
-          kind: "updateProperties",
-          id,
-          properties: {
-            ...current.properties,
-            title: [{ text: normalized }],
-          },
-          expectedRevision: current.revision,
-        },
-      ]);
+      await saveQueue.enqueue([{ kind: "deleteSubtree", id }]);
+      for (const pageId of deletedPageIds) {
+        pendingDocuments.delete(pageId);
+        historyByPage.delete(pageId);
+      }
+      persistExpanded(expandedIds.filter((pageId) => !deleted.has(pageId)));
       await refreshSidebar();
-      if (requestedPageId === id) await loadPageContent(id);
+
+      if (selectedWasDeleted) {
+        clearTypingSessions();
+        pageLoadCycle += 1;
+        pageChunk = null;
+        undoStack = [];
+        redoStack = [];
+        focusRequest = null;
+        const nextId = fallbackId && pages.some((page) => page.id === fallbackId)
+          ? fallbackId
+          : rootPageIds[0];
+        if (nextId) selectPage(nextId, true);
+        else clearPageSelection();
+      }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -250,64 +332,383 @@
     }
   }
 
-  async function saveParagraph(
-    id: string,
-    text: string,
-    expectedRevision: number,
-  ): Promise<number> {
-    const current = pageChunk?.blocks.find((block) => block.id === id);
-    if (!current || current.type !== "paragraph") return expectedRevision;
-    error = "";
+  function clearPageSelection() {
+    localStorage.removeItem("chesscave.notes.last-page.v1");
+    const url = new URL(page.url);
+    url.searchParams.delete("page");
+    void goto(`${url.pathname}${url.search}`, {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
 
-    try {
-      const result = await saveQueue.enqueue([
-        {
-          kind: "updateProperties",
-          id,
-          properties: {
-            ...current.properties,
-            title: text ? [{ text }] : [],
-          },
-          expectedRevision,
-        },
-      ]);
-      const updated = result.blocks.find((block) => block.id === id);
-      if (!updated) throw new Error("The saved paragraph was not returned.");
-      const currentChunk = pageChunk;
-      if (currentChunk && currentChunk.rootId === selectedPage?.id) {
-        pageChunk = {
-          ...currentChunk,
-          blocks: currentChunk.blocks.map((block) =>
-            block.id === updated.id ? updated : block,
-          ),
-        };
-      }
-      return updated.revision;
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-      throw cause;
+  function renamePage(id: string, title: string) {
+    const current = pages.find((candidate) => candidate.id === id);
+    if (!current) return;
+    const normalized = title.replace(/[\r\n]+/g, " ").trim() || "Untitled";
+    if (normalized === notePageTitle(current)) return;
+    const properties = {
+      ...current.properties,
+      title: [{ text: normalized }],
+    };
+    pages = pages.map((pageBlock) =>
+      pageBlock.id === id ? { ...pageBlock, properties } : pageBlock
+    );
+    const currentChunk = pageChunk;
+    if (currentChunk?.rootId === id) {
+      pageChunk = {
+        ...currentChunk,
+        blocks: currentChunk.blocks.map((block) =>
+          block.id === id ? { ...block, properties } : block
+        ),
+      };
+      cacheCurrentDocument();
     }
+    persistEditorOperations([
+      { kind: "updateProperties", id, properties },
+    ]);
   }
 
   function blockText(block: NoteBlockRecord): string {
     return block.properties.title.map((run) => run.text).join("");
   }
 
-  function focusLastParagraph() {
-    const editors = blockPreviewElement?.querySelectorAll<HTMLElement>(
-      "[data-note-paragraph-editor]",
-    );
-    const editor = editors?.item(editors.length - 1);
-    if (!editor) return;
+  function handleParagraphInput(
+    id: string,
+    text: string,
+    beforeOffset: number,
+    offset: number,
+    composing: boolean,
+  ) {
+    const current = pageChunk;
+    const block = current?.blocks.find((candidate) => candidate.id === id);
+    if (!current || !block || block.type !== "paragraph") return;
 
-    editor.focus();
-    const selection = window.getSelection();
-    if (!selection) return;
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
+    let session = typingSessions.get(id);
+    if (!session) {
+      session = {
+        before: current,
+        beforeOffset: Math.min(beforeOffset, noteBlockText(block).length),
+        afterOffset: offset,
+        timer: null,
+      };
+      typingSessions.set(id, session);
+      typingActive = true;
+    }
+    session.afterOffset = offset;
+    pageChunk = {
+      ...current,
+      blocks: current.blocks.map((candidate) =>
+        candidate.id === id
+          ? {
+              ...candidate,
+              properties: textProperties(candidate.properties, text),
+            }
+          : candidate,
+      ),
+    };
+    cacheCurrentDocument();
+    if (!composing) scheduleTypingCommit(id);
+  }
+
+  function scheduleTypingCommit(id: string) {
+    const session = typingSessions.get(id);
+    if (!session) return;
+    if (session.timer) clearTimeout(session.timer);
+    session.timer = setTimeout(() => {
+      session.timer = null;
+      finalizeTyping(id);
+    }, 450);
+  }
+
+  function handleParagraphCommit(id: string, offset: number) {
+    const session = typingSessions.get(id);
+    if (session) session.afterOffset = offset;
+    finalizeTyping(id);
+  }
+
+  function finalizeTyping(id: string) {
+    const session = typingSessions.get(id);
+    if (!session) return;
+    if (session.timer) clearTimeout(session.timer);
+    typingSessions.delete(id);
+    typingActive = typingSessions.size > 0;
+
+    const current = pageChunk;
+    const currentBlock = current?.blocks.find((block) => block.id === id);
+    const beforeBlock = session.before.blocks.find((block) => block.id === id);
+    if (
+      !current ||
+      !currentBlock ||
+      !beforeBlock ||
+      current.rootId !== session.before.rootId
+    ) {
+      return;
+    }
+    const currentText = noteBlockText(currentBlock);
+    if (currentText === noteBlockText(beforeBlock)) return;
+    const base = replaceParagraphText(
+      session.before,
+      id,
+      currentText,
+      session.beforeOffset,
+      session.afterOffset,
+    );
+    const change: EditorChange = {
+      ...base,
+      after: current,
+      afterSelection: {
+        blockId: id,
+        offset: Math.min(session.afterOffset, currentText.length),
+      },
+    };
+    pushHistory(change);
+    persistEditorOperations(change.forward);
+  }
+
+  function finalizeAllTyping() {
+    for (const id of [...typingSessions.keys()]) finalizeTyping(id);
+  }
+
+  function clearTypingSessions() {
+    for (const session of typingSessions.values()) {
+      if (session.timer) clearTimeout(session.timer);
+    }
+    typingSessions.clear();
+    typingActive = false;
+  }
+
+  function pushHistory(change: EditorChange) {
+    undoStack = [...undoStack, change];
+    redoStack = [];
+    cacheCurrentHistory();
+  }
+
+  function applyEditorChange(change: EditorChange) {
+    pageChunk = change.after;
+    cacheCurrentDocument();
+    pushHistory(change);
+    persistEditorOperations(change.forward);
+    requestEditorFocus(change.afterSelection);
+  }
+
+  function persistEditorOperations(operations: NoteOperation[]) {
+    error = "";
+    void saveQueue
+      .enqueue(operations)
+      .then(mergeCommittedResult)
+      .catch((cause) => {
+        error = cause instanceof Error ? cause.message : String(cause);
+      });
+  }
+
+  function mergeCommittedResult(result: NotesTransactionResult) {
+    const current = pageChunk;
+    if (!current) return;
+    const committed = new Map(result.blocks.map((block) => [block.id, block]));
+    const localById = new Map(current.blocks.map((block) => [block.id, block]));
+    pageChunk = {
+      ...current,
+      blocks: current.blocks.map((local) => {
+        const stored = committed.get(local.id);
+        return stored
+          ? {
+              ...stored,
+              type: local.type,
+              properties: local.properties,
+              content: local.content,
+              parentId: local.parentId,
+            }
+          : local;
+      }),
+    };
+    if (saveState.status !== "saved" || saveState.pending > 0) {
+      cacheCurrentDocument();
+    }
+    pages = pages.map((local) => {
+      const stored = committed.get(local.id);
+      const documentVersion = localById.get(local.id);
+      return stored?.type === "page"
+        ? {
+            ...stored,
+            properties: local.properties,
+            content: documentVersion?.content ?? stored.content,
+          }
+        : local;
+    });
+  }
+
+  function handleSplitParagraph(id: string, start: number, end: number) {
+    finalizeTyping(id);
+    const current = pageChunk;
+    if (!current) return;
+    try {
+      applyEditorChange(
+        splitParagraph(
+          current,
+          id,
+          start,
+          createNoteBlock("paragraph"),
+          end,
+        ),
+      );
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  function handleMergeBackward(id: string): boolean {
+    finalizeTyping(id);
+    const current = pageChunk;
+    if (!current) return false;
+    try {
+      const change = mergeParagraphBackward(current, id);
+      if (!change) return false;
+      applyEditorChange(change);
+      return true;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+      return false;
+    }
+  }
+
+  function handleParagraphMove(
+    id: string,
+    direction: "previous" | "next",
+  ): boolean {
+    finalizeTyping(id);
+    const root = pageChunk?.blocks.find((block) => block.id === pageChunk?.rootId);
+    if (!root) return false;
+    const paragraphIds = root.content.filter((childId) =>
+      pageChunk?.blocks.some(
+        (block) => block.id === childId && block.type === "paragraph",
+      ),
+    );
+    const index = paragraphIds.indexOf(id);
+    const targetId = paragraphIds[index + (direction === "previous" ? -1 : 1)];
+    if (!targetId) return false;
+    const target = pageChunk?.blocks.find((block) => block.id === targetId);
+    requestEditorFocus({
+      blockId: targetId,
+      offset: direction === "previous" && target
+        ? noteBlockText(target).length
+        : 0,
+    });
+    return true;
+  }
+
+  function handleParagraphPaste(
+    id: string,
+    start: number,
+    end: number,
+    text: string,
+  ) {
+    finalizeTyping(id);
+    const current = pageChunk;
+    if (!current) return;
+    const lineCount = text
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\r", "\n")
+      .split("\n").length;
+    const blocks = Array.from(
+      { length: Math.max(0, lineCount - 1) },
+      () => createNoteBlock("paragraph"),
+    );
+    try {
+      applyEditorChange(
+        pastePlainText(current, id, start, end, text, blocks),
+      );
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  function undoEditorChange() {
+    finalizeAllTyping();
+    const change = undoStack.at(-1);
+    if (!change) return;
+    undoStack = undoStack.slice(0, -1);
+    redoStack = [...redoStack, change];
+    pageChunk = change.before;
+    cacheCurrentDocument();
+    cacheCurrentHistory();
+    persistEditorOperations(change.inverse);
+    requestEditorFocus(change.beforeSelection);
+  }
+
+  function redoEditorChange() {
+    finalizeAllTyping();
+    const change = redoStack.at(-1);
+    if (!change) return;
+    redoStack = redoStack.slice(0, -1);
+    undoStack = [...undoStack, change];
+    pageChunk = change.after;
+    cacheCurrentDocument();
+    cacheCurrentHistory();
+    persistEditorOperations(change.forward);
+    requestEditorFocus(change.afterSelection);
+  }
+
+  function requestEditorFocus(selection: EditorSelection) {
+    focusToken += 1;
+    focusRequest = { ...selection, token: focusToken };
+  }
+
+  function focusFirstParagraph() {
+    const paragraph = selectedContent.find(
+      (block) => block.type === "paragraph",
+    );
+    if (paragraph) {
+      requestEditorFocus({ blockId: paragraph.id, offset: 0 });
+    }
+  }
+
+  function resizePageTitle(element: HTMLTextAreaElement) {
+    element.style.height = "0";
+    element.style.height = `${element.scrollHeight}px`;
+  }
+
+  function cacheCurrentDocument() {
+    const current = pageChunk;
+    if (current) pendingDocuments.set(current.rootId, current);
+  }
+
+  function cacheCurrentHistory() {
+    const pageId = pageChunk?.rootId;
+    if (!pageId) return;
+    historyByPage.set(pageId, {
+      undo: [...undoStack],
+      redo: [...redoStack],
+    });
+  }
+
+  function continueWriting() {
+    finalizeAllTyping();
+    const current = pageChunk;
+    if (!current || current.rootId !== selectedPage?.id) return;
+    const trailing = trailingParagraph(current);
+    if (trailing) {
+      requestEditorFocus({
+        blockId: trailing.id,
+        offset: noteBlockText(trailing).length,
+      });
+      return;
+    }
+
+    const root = current.blocks.find((block) => block.id === current.rootId);
+    if (!root) return;
+    try {
+      applyEditorChange(
+        insertParagraph(
+          current,
+          root.content.length,
+          createNoteBlock("paragraph"),
+        ),
+      );
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
   }
 </script>
 
@@ -318,6 +719,12 @@
     content="Local, structured chess notes in ChessCave."
   />
 </svelte:head>
+
+<svelte:window
+  onresize={() => {
+    if (pageTitleElement) resizePageTitle(pageTitleElement);
+  }}
+/>
 
 <div class="notes-app">
   {#snippet headerActions()}
@@ -331,12 +738,43 @@
       >
         <IconListRegular />
       </button>
+      <div class="history-actions" role="group" aria-label="Editing history">
+        <button
+          class="icon-action"
+          type="button"
+          aria-label="Undo"
+          title="Undo"
+          disabled={!typingActive && !undoStack.length}
+          onclick={undoEditorChange}
+        >
+          <IconArrowCounterClockwiseRegular />
+        </button>
+        <button
+          class="icon-action"
+          type="button"
+          aria-label="Redo"
+          title="Redo"
+          disabled={typingActive || !redoStack.length}
+          onclick={redoEditorChange}
+        >
+          <IconArrowClockwiseRegular />
+        </button>
+      </div>
       {#if saveState.status === "failed"}
-        <button class="retry" type="button" onclick={() => saveQueue.retry()}>
+        <button
+          class="retry"
+          type="button"
+          title={saveState.error ?? "The last edit could not be saved."}
+          onclick={() => saveQueue.retry()}
+        >
           Retry save
         </button>
       {:else}
-        <span class:working={saveState.status === "saving"} class="save-state">
+        <span
+          class:working={saveState.status === "saving"}
+          class="save-state"
+          aria-live="polite"
+        >
           {#if saveState.status === "saving"}
             <IconSpinnerGapRegular />
           {:else}
@@ -402,6 +840,7 @@
             onToggle={toggleExpanded}
             onCreateChild={(id) => createPage(id)}
             onRename={renamePage}
+            onDelete={deletePage}
           />
         {:else if !error}
           <div class="sidebar-state">No pages yet.</div>
@@ -425,22 +864,29 @@
       {:else if selectedPage}
         <article>
           <span class="page-kicker">Note</span>
-          <input
+          <textarea
             class="page-title"
+            bind:this={pageTitleElement}
             value={notePageTitle(selectedPage)}
+            rows="1"
+            wrap="soft"
             aria-label="Page title"
             disabled={mutationBusy}
+            oninput={(event) => resizePageTitle(event.currentTarget)}
             onkeydown={(event) => {
+              if (event.isComposing) return;
               if (event.key === "Enter") {
                 event.preventDefault();
                 event.currentTarget.blur();
+                focusFirstParagraph();
               } else if (event.key === "Escape") {
                 event.currentTarget.value = notePageTitle(selectedPage);
+                resizePageTitle(event.currentTarget);
                 event.currentTarget.blur();
               }
             }}
             onblur={(event) => renamePage(selectedPage.id, event.currentTarget.value)}
-          />
+          ></textarea>
 
           {#if error}
             <div class="inline-error">{error}</div>
@@ -449,7 +895,6 @@
           <div
             class:loading={pageLoading}
             class="block-preview"
-            bind:this={blockPreviewElement}
           >
             {#each selectedContent as block (block.id)}
               {#if block.type === "page"}
@@ -466,7 +911,15 @@
                 <ParagraphBlockEditor
                   {block}
                   disabled={!nativeHost}
-                  onSave={saveParagraph}
+                  {focusRequest}
+                  onInput={handleParagraphInput}
+                  onCommit={handleParagraphCommit}
+                  onSplit={handleSplitParagraph}
+                  onMergeBackward={handleMergeBackward}
+                  onMove={handleParagraphMove}
+                  onPaste={handleParagraphPaste}
+                  onUndo={undoEditorChange}
+                  onRedo={redoEditorChange}
                 />
               {:else}
                 <div class="paragraph-block">
@@ -479,7 +932,7 @@
               type="button"
               tabindex="-1"
               aria-label="Continue writing"
-              onclick={focusLastParagraph}
+              onclick={continueWriting}
             ></button>
           </div>
         </article>
@@ -506,6 +959,31 @@
     display: flex;
     gap: 12px;
     align-items: center;
+  }
+
+  .history-actions {
+    display: flex;
+    gap: 1px;
+    padding: 2px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--paper);
+  }
+
+  .header-actions .icon-action {
+    display: grid;
+    width: 28px;
+    min-height: 28px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 14px;
+  }
+
+  .header-actions .icon-action:hover:not(:disabled) {
+    color: var(--coral-dark);
+    background: var(--coral-soft);
   }
 
   .save-state {
@@ -691,16 +1169,22 @@
   }
 
   .page-title {
+    display: block;
     width: 100%;
+    min-height: 1.08em;
     padding: 0;
     border: 0;
     outline: 0;
+    overflow: hidden;
+    resize: none;
     color: var(--ink);
     background: transparent;
     font-family: var(--display);
     font-size: clamp(36px, 5vw, 58px);
     font-variation-settings: "opsz" 58, "wght" 520;
     line-height: 1.08;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 
   .page-title:focus {
@@ -863,6 +1347,10 @@
     .header-actions .new-page {
       min-height: 32px;
       padding-inline: 11px;
+    }
+
+    .history-actions {
+      display: none;
     }
 
     article {

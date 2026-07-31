@@ -3,6 +3,7 @@
   import IconCaretRightRegular from "phosphor-icons-svelte/IconCaretRightRegular.svelte";
   import IconDotsThreeBold from "phosphor-icons-svelte/IconDotsThreeBold.svelte";
   import IconFileTextRegular from "phosphor-icons-svelte/IconFileTextRegular.svelte";
+  import IconTrashRegular from "phosphor-icons-svelte/IconTrashRegular.svelte";
   import {
     buildVisiblePageTree,
     notePageTitle,
@@ -20,6 +21,7 @@
     onToggle,
     onCreateChild,
     onRename,
+    onDelete,
   }: {
     rootPageIds: string[];
     pages: NoteBlockRecord[];
@@ -30,10 +32,12 @@
     onToggle: (id: string) => void;
     onCreateChild: (parentId: string) => void;
     onRename: (id: string, title: string) => void;
+    onDelete: (id: string) => void;
   } = $props();
 
   let treeElement: HTMLDivElement;
   let menuPageId = $state<string | null>(null);
+  let confirmDeletePageId = $state<string | null>(null);
   let renamePageId = $state<string | null>(null);
   let renameDraft = $state("");
   const visible = $derived(
@@ -53,9 +57,45 @@
     pageButton(id)?.focus();
   }
 
+  function closeMenu() {
+    menuPageId = null;
+    confirmDeletePageId = null;
+  }
+
+  function menuContains(target: EventTarget | null): boolean {
+    if (!(target instanceof Node) || !menuPageId || !treeElement) return false;
+    const menu = treeElement.querySelector<HTMLElement>(
+      `[data-page-menu="${menuPageId}"]`,
+    );
+    const trigger = treeElement.querySelector<HTMLElement>(
+      `[data-page-menu-trigger="${menuPageId}"]`,
+    );
+    return Boolean(menu?.contains(target) || trigger?.contains(target));
+  }
+
+  function handleWindowPointerDown(event: PointerEvent) {
+    if (menuPageId && !menuContains(event.target)) closeMenu();
+  }
+
+  function handleWindowFocusIn(event: FocusEvent) {
+    if (menuPageId && !menuContains(event.target)) closeMenu();
+  }
+
+  function handleWindowKeyDown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !menuPageId) return;
+    event.preventDefault();
+    const pageId = menuPageId;
+    closeMenu();
+    void tick().then(() => {
+      treeElement?.querySelector<HTMLButtonElement>(
+        `[data-page-menu-trigger="${pageId}"]`,
+      )?.focus();
+    });
+  }
+
   function beginRename(page: NoteBlockRecord) {
     if (mutating) return;
-    menuPageId = null;
+    closeMenu();
     renameDraft = notePageTitle(page);
     renamePageId = page.id;
     void tick().then(() => {
@@ -93,6 +133,12 @@
     else beginRename(page);
   }
 </script>
+
+<svelte:window
+  onpointerdown={handleWindowPointerDown}
+  onfocusin={handleWindowFocusIn}
+  onkeydown={handleWindowKeyDown}
+/>
 
 <div class="page-tree" role="tree" aria-label="Note pages" bind:this={treeElement}>
   {#each visible as node, index (node.page.id)}
@@ -152,7 +198,7 @@
               node.page,
             )}
           onclick={() => {
-            menuPageId = null;
+            closeMenu();
             onSelect(node.page.id);
           }}
         >
@@ -165,30 +211,65 @@
 
       <button
         class="more"
+        data-page-menu-trigger={node.page.id}
         type="button"
         aria-label={`Page actions for ${notePageTitle(node.page)}`}
         aria-expanded={menuPageId === node.page.id}
         disabled={mutating}
-        onclick={() =>
-          (menuPageId = menuPageId === node.page.id ? null : node.page.id)}
+        onclick={() => {
+          const next = menuPageId === node.page.id ? null : node.page.id;
+          closeMenu();
+          menuPageId = next;
+        }}
       ><IconDotsThreeBold /></button>
 
       {#if menuPageId === node.page.id}
-        <div class="page-menu" role="menu">
-          <button type="button" role="menuitem" onclick={() => beginRename(node.page)}>
-            Rename
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={mutating}
-            onclick={() => {
-              menuPageId = null;
-              onCreateChild(node.page.id);
-            }}
-          >
-            New sub-page
-          </button>
+        <div class="page-menu" data-page-menu={node.page.id} role="menu">
+          {#if confirmDeletePageId === node.page.id}
+            <p>Delete “{notePageTitle(node.page)}” and everything inside it?</p>
+            <div class="confirm-actions">
+              <button
+                type="button"
+                role="menuitem"
+                onclick={() => (confirmDeletePageId = null)}
+              >Cancel</button>
+              <button
+                class="confirm-delete"
+                type="button"
+                role="menuitem"
+                disabled={mutating}
+                onclick={() => {
+                  closeMenu();
+                  onDelete(node.page.id);
+                }}
+              >Delete</button>
+            </div>
+          {:else}
+            <button type="button" role="menuitem" onclick={() => beginRename(node.page)}>
+              Rename
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={mutating}
+              onclick={() => {
+                closeMenu();
+                onCreateChild(node.page.id);
+              }}
+            >
+              New sub-page
+            </button>
+            <button
+              class="delete-page"
+              type="button"
+              role="menuitem"
+              disabled={mutating}
+              onclick={() => (confirmDeletePageId = node.page.id)}
+            >
+              <IconTrashRegular />
+              Delete page
+            </button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -338,6 +419,44 @@
     font-size: 11px;
     text-align: left;
     cursor: pointer;
+  }
+
+  .page-menu p {
+    max-width: 180px;
+    margin: 3px 5px 7px;
+    color: var(--ink-soft);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .page-menu .delete-page {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+    color: var(--danger);
+  }
+
+  .page-menu .delete-page :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+
+  .confirm-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+
+  .page-menu .confirm-delete {
+    color: var(--pearl-raised);
+    text-align: center;
+    background: var(--danger);
+  }
+
+  .page-menu .confirm-delete:hover,
+  .page-menu .confirm-delete:focus-visible {
+    color: var(--pearl-raised);
+    background: var(--coral-dark);
   }
 
   .page-menu button:hover,

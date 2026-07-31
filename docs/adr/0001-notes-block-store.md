@@ -32,9 +32,17 @@ real-time update infrastructure.
    pointers in one database transaction.
 7. Every committed transaction is validated for missing references, duplicate
    ownership, parent mismatch, and cycles.
-8. The client applies future editor changes locally and serializes persistence
-   through a failure-aware save queue.
-9. The stored model remains independent of the eventual editor rendering
+8. The client applies editor changes locally and serializes persistence through
+   a failure-aware save queue. Failed work and the corresponding local document
+   remain available until an explicit retry succeeds.
+9. Paragraph split, merge, paste, undo, and redo are represented as reversible
+   operation groups. Removing a single block requires detaching it first, and
+   leaf deletion is limited to childless blocks. Confirmed page deletion uses a
+   separate atomic subtree operation that removes the owning reference and all
+   descendants before graph validation and commit.
+10. Editing history is session-local; durable storage contains the resulting
+   block graph rather than an ever-growing command log.
+11. The stored model remains independent of the editor rendering
    library.
 
 ## Why SQLite
@@ -57,6 +65,8 @@ boundary; inconsistent states are rejected before commit.
 - Notes can load a sidebar tree separately from one selected page.
 - A transaction failure leaves the previous graph intact.
 - Unknown future properties remain preserved as JSON.
+- Undo can recreate a removed leaf with its original stable ID and sibling
+  position.
 - Schema evolution requires explicit migrations.
 - The SQLite dependency adds native code and binary size, so later persistence
   dependencies require a similarly concrete benefit.

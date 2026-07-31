@@ -74,4 +74,30 @@ describe("NotesSaveQueue", () => {
     expect(states).toContain("failed");
     expect(queue.state).toEqual({ status: "saved", pending: 0, error: null });
   });
+
+  test("keeps an undo transaction ordered behind a failed local edit", async () => {
+    let firstAttempt = true;
+    const committed: string[] = [];
+    const queue = new NotesSaveQueue(async (operations) => {
+      const id = operations[0]?.kind === "updateProperties"
+        ? operations[0].id
+        : "unknown";
+      if (firstAttempt) {
+        firstAttempt = false;
+        throw new Error("disk paused");
+      }
+      committed.push(id);
+      return result(committed.length);
+    });
+
+    const forward = queue.enqueue([operation("forward")]);
+    while (queue.state.status !== "failed") await Promise.resolve();
+    const undo = queue.enqueue([operation("undo")]);
+    expect(queue.state).toMatchObject({ status: "failed", pending: 2 });
+
+    queue.retry();
+    await Promise.all([forward, undo]);
+    expect(committed).toEqual(["forward", "undo"]);
+    expect(queue.state).toEqual({ status: "saved", pending: 0, error: null });
+  });
 });

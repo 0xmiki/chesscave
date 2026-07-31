@@ -97,6 +97,8 @@ change type
 insert child
 move child
 remove child
+delete detached leaf block
+delete owned subtree
 ```
 
 Every committed transaction must preserve these invariants:
@@ -118,8 +120,8 @@ after the current exit gate passes in automated tests and a desktop build.
 | --- | --- | --- |
 | 0 · Durable block foundation | Complete · 2026-07-31 | — |
 | 1 · Notes destination and page tree | Complete · 2026-07-31 | Milestone 0 |
-| 2 · Reliable paragraph editor | Ready to begin | Milestone 1 |
-| 3 · Essential document vocabulary | Gated | Milestone 2 |
+| 2 · Reliable paragraph editor | Complete · 2026-07-31 | Milestone 1 |
+| 3 · Essential document vocabulary | Ready to begin | Milestone 2 |
 | 4 · Slash menu and block transformation | Gated | Milestone 3 |
 | 5 · Organization, recovery, and portability | Gated | Core Notes v1 |
 | 6 · Chess-native notes | Gated | Core Notes v1 |
@@ -263,6 +265,31 @@ platform approach cannot meet the exit gate.
 - Screen-reader labels, focus order, IME input, and reduced-motion behavior are
   verified.
 
+**Completion record · 2026-07-31**
+
+- Each stored paragraph now renders as its own quiet, plain-text editable
+  surface. `Enter` splits a block, boundary `Backspace` merges it into the
+  preceding paragraph, and boundary arrow keys preserve keyboard flow between
+  blocks. Blank document space creates a real trailing paragraph when the last
+  render child is a subpage, rather than redirecting input to an earlier block.
+- Selection-aware transactions drive typing groups, split, merge, multiline
+  paste, undo, and redo. Structural edits restore focus and caret position
+  after keyed rerenders, while composition events defer structural shortcuts
+  until IME input completes.
+- Paragraph and page-title edits apply locally before entering the ordered save
+  queue. A failed save keeps the local document and queued operations intact;
+  the header exposes a single actionable **Retry save** state.
+- The Rust transaction boundary can delete only detached, childless blocks,
+  allowing merges to remove paragraph records without weakening graph
+  invariants. Undo recreates the same stable block ID and sibling position.
+- Automated fixtures cover a 100-paragraph ordered save/reopen, reversible
+  split/merge/paste operations, IME shortcut suppression, save failure followed
+  by ordered undo and retry, and native close/reopen persistence.
+- Editable blocks expose textbox labels and ordered focus targets. The existing
+  global reduced-motion rule also suppresses the Notes saving and drawer motion.
+- Svelte checks, 41 Bun tests, 13 Rust tests, Rust formatting, strict Clippy,
+  the static production build, and the Tauri debug executable build pass.
+
 ### Milestone 3 — Essential document vocabulary
 
 **Outcome:** Notes supports the small Markdown vocabulary needed for useful
@@ -352,7 +379,8 @@ slash menu. Only then should scope expand.
 - Reorder and reparent pages with drag-and-drop plus a keyboard alternative.
 - Add breadcrumbs for deeply nested pages.
 - Add title search across pages.
-- Add archive/trash, restore, and permanent-delete confirmation.
+- Add archive/trash and restore around the existing confirmed permanent page
+  deletion path.
 - Add duplicate-page behavior with regenerated IDs and preserved hierarchy.
 - Add Markdown export for a page subtree and a conservative Markdown import.
 - Add block reorder handles only if pointer and keyboard movement share one

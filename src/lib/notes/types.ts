@@ -63,6 +63,14 @@ export type NoteOperation =
       kind: "removeChild";
       parentId: string | null;
       childId: string;
+    }
+  | {
+      kind: "deleteBlock";
+      id: string;
+    }
+  | {
+      kind: "deleteSubtree";
+      id: string;
     };
 
 export interface NotesBootstrap {

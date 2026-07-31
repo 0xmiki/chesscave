@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildVisiblePageTree,
+  collectPageSubtreeIds,
+  deletionFallbackPageId,
   notePageTitle,
   resolvePageTreeKey,
 } from "./tree";
@@ -103,5 +105,26 @@ describe("Notes page tree", () => {
     expect(resolvePageTreeKey("ArrowLeft", 0, expanded, ["root"]))
       .toEqual({ kind: "toggle", id: "root" });
     expect(resolvePageTreeKey("ArrowUp", 0, expanded, ["root"])).toBeNull();
+  });
+
+  test("collects nested pages and chooses a stable selection after deletion", () => {
+    const pages = [
+      page("first", "First", ["child"]),
+      page("child", "Child", ["grandchild"], "first"),
+      page("grandchild", "Grandchild", [], "child"),
+      page("second", "Second"),
+    ];
+
+    expect(collectPageSubtreeIds(pages, "first")).toEqual([
+      "first",
+      "child",
+      "grandchild",
+    ]);
+    expect(deletionFallbackPageId(["first", "second"], pages, "first"))
+      .toBe("second");
+    expect(deletionFallbackPageId(["first", "second"], pages, "child"))
+      .toBe("first");
+    expect(deletionFallbackPageId(["first", "second"], pages, "second"))
+      .toBe("first");
   });
 });

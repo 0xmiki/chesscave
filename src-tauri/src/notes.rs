@@ -74,6 +74,12 @@ pub enum NoteOperation {
         parent_id: Option<String>,
         child_id: String,
     },
+    DeleteBlock {
+        id: String,
+    },
+    DeleteSubtree {
+        id: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -322,7 +328,7 @@ fn validate_supported_type(block_type: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "Block type `{block_type}` is not available in Notes milestone 0."
+            "Block type `{block_type}` is not available in this Notes build."
         ))
     }
 }
@@ -573,6 +579,23 @@ fn validate_graph(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn collect_subtree_ids(connection: &Connection, root_id: &str) -> Result<Vec<String>, String> {
+    let mut ordered = Vec::new();
+    let mut stack = vec![root_id.to_string()];
+    let mut visited = HashSet::new();
+
+    while let Some(id) = stack.pop() {
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+        let block = require_block(connection, &id)?;
+        ordered.push(id);
+        stack.extend(block.content);
+    }
+
+    Ok(ordered)
+}
+
 fn apply_operations(
     connection: &mut Connection,
     operations: Vec<NoteOperation>,
@@ -731,6 +754,39 @@ fn apply_operations(
                 persist_block(&transaction, &child)?;
                 touched.insert(child_id);
             }
+            NoteOperation::DeleteBlock { id } => {
+                let block = require_block(&transaction, &id)?;
+                if current_parent(&transaction, &block)?.is_some() {
+                    return Err(format!(
+                        "Block {id} must be detached before it can be deleted."
+                    ));
+                }
+                if !block.content.is_empty() {
+                    return Err(format!(
+                        "Block {id} still owns children and cannot be deleted."
+                    ));
+                }
+                transaction
+                    .execute("DELETE FROM note_blocks WHERE id = ?1", params![id])
+                    .map_err(|error| format!("Could not delete note block: {error}"))?;
+                touched.remove(&id);
+            }
+            NoteOperation::DeleteSubtree { id } => {
+                let root = require_block(&transaction, &id)?;
+                if root.block_type != "page" {
+                    return Err(format!("Block {id} is not a page subtree."));
+                }
+                let owner = current_parent(&transaction, &root)?
+                    .ok_or_else(|| format!("Page {id} has no owning parent."))?;
+                let subtree = collect_subtree_ids(&transaction, &id)?;
+                detach_reference(&transaction, owner.as_deref(), &id, timestamp, &mut touched)?;
+                for block_id in subtree.iter().rev() {
+                    transaction
+                        .execute("DELETE FROM note_blocks WHERE id = ?1", params![block_id])
+                        .map_err(|error| format!("Could not delete page subtree {id}: {error}"))?;
+                    touched.remove(block_id);
+                }
+            }
         }
     }
 
@@ -848,6 +904,7 @@ mod tests {
     const ROOT: &str = "00000000-0000-4000-8000-000000000001";
     const CHILD: &str = "00000000-0000-4000-8000-000000000002";
     const PARAGRAPH: &str = "00000000-0000-4000-8000-000000000003";
+    const SECOND_PARAGRAPH: &str = "00000000-0000-4000-8000-000000000004";
     const MISSING: &str = "00000000-0000-4000-8000-000000000099";
 
     struct TestDatabase {
@@ -1115,6 +1172,223 @@ mod tests {
     }
 
     #[test]
+    fn deletes_only_detached_leaf_blocks_and_can_recreate_them_for_undo() {
+        let database = TestDatabase::new("delete-leaf");
+        let mut connection = database.open();
+        seed_tree(&mut connection);
+
+        let error = apply_operations(
+            &mut connection,
+            vec![NoteOperation::DeleteBlock {
+                id: PARAGRAPH.to_string(),
+            }],
+        )
+        .expect_err("attached block must not be deleted");
+        assert!(error.contains("must be detached"), "{error}");
+        assert!(load_block(&connection, PARAGRAPH)
+            .expect("load attached paragraph")
+            .is_some());
+
+        apply_operations(
+            &mut connection,
+            vec![
+                NoteOperation::RemoveChild {
+                    parent_id: Some(CHILD.to_string()),
+                    child_id: PARAGRAPH.to_string(),
+                },
+                NoteOperation::DeleteBlock {
+                    id: PARAGRAPH.to_string(),
+                },
+            ],
+        )
+        .expect("detach and delete paragraph");
+        assert!(load_block(&connection, PARAGRAPH)
+            .expect("load deleted paragraph")
+            .is_none());
+        assert!(require_block(&connection, CHILD)
+            .expect("parent after delete")
+            .content
+            .is_empty());
+
+        apply_operations(
+            &mut connection,
+            vec![
+                create(PARAGRAPH, "paragraph", "Restored by undo"),
+                insert(Some(CHILD), PARAGRAPH, 0),
+            ],
+        )
+        .expect("recreate deleted paragraph");
+        let restored = load_page_chunk(&connection, CHILD).expect("restored page");
+        assert_eq!(restored.blocks.len(), 2);
+        assert_eq!(
+            restored.blocks[1].properties["title"][0]["text"],
+            "Restored by undo"
+        );
+    }
+
+    #[test]
+    fn deletes_a_page_and_every_owned_descendant_atomically() {
+        let database = TestDatabase::new("delete-page-subtree");
+        let mut connection = database.open();
+        seed_tree(&mut connection);
+
+        apply_operations(
+            &mut connection,
+            vec![NoteOperation::DeleteSubtree {
+                id: CHILD.to_string(),
+            }],
+        )
+        .expect("delete nested page subtree");
+
+        validate_graph(&connection).expect("valid graph after subtree deletion");
+        let root = load_page_chunk(&connection, ROOT).expect("remaining root page");
+        assert_eq!(root.blocks.len(), 1);
+        assert!(root.blocks[0].content.is_empty());
+        assert!(load_block(&connection, CHILD)
+            .expect("load deleted child page")
+            .is_none());
+        assert!(load_block(&connection, PARAGRAPH)
+            .expect("load deleted descendant paragraph")
+            .is_none());
+    }
+
+    #[test]
+    fn deleting_a_root_page_removes_its_subtree_from_the_workspace() {
+        let database = TestDatabase::new("delete-root-subtree");
+        let mut connection = database.open();
+        seed_tree(&mut connection);
+
+        apply_operations(
+            &mut connection,
+            vec![NoteOperation::DeleteSubtree {
+                id: ROOT.to_string(),
+            }],
+        )
+        .expect("delete root page subtree");
+
+        validate_graph(&connection).expect("valid empty graph");
+        assert!(load_root_ids(&connection).expect("empty roots").is_empty());
+        assert!(load_all_blocks(&connection)
+            .expect("empty block store")
+            .is_empty());
+    }
+
+    #[test]
+    fn persists_split_merge_and_undo_as_atomic_editor_transactions() {
+        let database = TestDatabase::new("editor-transactions");
+        {
+            let mut connection = database.open();
+            apply_operations(
+                &mut connection,
+                vec![
+                    create(ROOT, "page", "Editor transactions"),
+                    create(PARAGRAPH, "paragraph", "Queen's pawn"),
+                    insert(None, ROOT, 0),
+                    insert(Some(ROOT), PARAGRAPH, 0),
+                ],
+            )
+            .expect("seed editor transaction fixture");
+
+            apply_operations(
+                &mut connection,
+                vec![
+                    NoteOperation::UpdateProperties {
+                        id: PARAGRAPH.to_string(),
+                        properties: properties("Queen's"),
+                        expected_revision: None,
+                    },
+                    create(SECOND_PARAGRAPH, "paragraph", " pawn"),
+                    insert(Some(ROOT), SECOND_PARAGRAPH, 1),
+                ],
+            )
+            .expect("split paragraph");
+            let split = load_page_chunk(&connection, ROOT).expect("load split page");
+            assert_eq!(split.blocks[0].content, vec![PARAGRAPH, SECOND_PARAGRAPH]);
+            assert_eq!(split.blocks[1].properties["title"][0]["text"], "Queen's");
+            assert_eq!(split.blocks[2].properties["title"][0]["text"], " pawn");
+
+            apply_operations(
+                &mut connection,
+                vec![
+                    NoteOperation::UpdateProperties {
+                        id: PARAGRAPH.to_string(),
+                        properties: properties("Queen's pawn"),
+                        expected_revision: None,
+                    },
+                    NoteOperation::RemoveChild {
+                        parent_id: Some(ROOT.to_string()),
+                        child_id: SECOND_PARAGRAPH.to_string(),
+                    },
+                    NoteOperation::DeleteBlock {
+                        id: SECOND_PARAGRAPH.to_string(),
+                    },
+                ],
+            )
+            .expect("merge paragraph");
+            let merged = load_page_chunk(&connection, ROOT).expect("load merged page");
+            assert_eq!(merged.blocks[0].content, vec![PARAGRAPH]);
+            assert_eq!(
+                merged.blocks[1].properties["title"][0]["text"],
+                "Queen's pawn"
+            );
+
+            apply_operations(
+                &mut connection,
+                vec![
+                    NoteOperation::UpdateProperties {
+                        id: PARAGRAPH.to_string(),
+                        properties: properties("Queen's"),
+                        expected_revision: None,
+                    },
+                    create(SECOND_PARAGRAPH, "paragraph", " pawn"),
+                    insert(Some(ROOT), SECOND_PARAGRAPH, 1),
+                ],
+            )
+            .expect("undo paragraph merge");
+        }
+
+        let connection = database.open();
+        let reopened = load_page_chunk(&connection, ROOT).expect("reopen undone page");
+        assert_eq!(
+            reopened.blocks[0].content,
+            vec![PARAGRAPH, SECOND_PARAGRAPH]
+        );
+        assert_eq!(reopened.blocks[1].properties["title"][0]["text"], "Queen's");
+        assert_eq!(reopened.blocks[2].properties["title"][0]["text"], " pawn");
+    }
+
+    #[test]
+    fn reopens_one_hundred_paragraphs_in_their_original_order() {
+        let database = TestDatabase::new("hundred-paragraphs");
+        let paragraph_ids = (0..100)
+            .map(|index| format!("00000000-0000-4000-8000-{:012x}", index + 0x1000))
+            .collect::<Vec<_>>();
+        {
+            let mut connection = database.open();
+            let mut operations = vec![create(ROOT, "page", "Large note"), insert(None, ROOT, 0)];
+            for (index, id) in paragraph_ids.iter().enumerate() {
+                operations.push(create(id, "paragraph", &format!("Paragraph {index}")));
+                operations.push(insert(Some(ROOT), id, index));
+            }
+            apply_operations(&mut connection, operations).expect("create large note");
+        }
+
+        let connection = database.open();
+        let reopened = load_page_chunk(&connection, ROOT).expect("reopen large note");
+        assert_eq!(reopened.blocks.len(), 101);
+        assert_eq!(
+            reopened.blocks[0].content, paragraph_ids,
+            "stored paragraph order changed"
+        );
+        for (index, block) in reopened.blocks.iter().skip(1).enumerate() {
+            assert_eq!(
+                block.properties["title"][0]["text"],
+                format!("Paragraph {index}")
+            );
+        }
+    }
+
+    #[test]
     fn accepts_the_camel_case_tauri_operation_contract() {
         let operation: NoteOperation = serde_json::from_value(json!({
             "kind": "insertChild",
@@ -1135,6 +1409,16 @@ mod tests {
                 assert_eq!(index, 0);
             }
             _ => panic!("wrong operation variant"),
+        }
+
+        let deletion: NoteOperation = serde_json::from_value(json!({
+            "kind": "deleteSubtree",
+            "id": ROOT
+        }))
+        .expect("camel-case subtree deletion");
+        match deletion {
+            NoteOperation::DeleteSubtree { id } => assert_eq!(id, ROOT),
+            _ => panic!("wrong deletion variant"),
         }
 
         let block = NoteBlock {
