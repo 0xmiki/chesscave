@@ -1,5 +1,6 @@
 mod codex;
 mod engine;
+mod notes;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,6 +11,10 @@ pub fn run() {
             engine::engine_status,
             engine::analyze_position,
             engine::review_game,
+            notes::notes_bootstrap,
+            notes::notes_load_sidebar,
+            notes::notes_load_page,
+            notes::notes_apply_transaction,
             codex::coach_start,
             codex::coach_new_thread,
             codex::coach_send,

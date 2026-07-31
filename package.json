@@ -20,7 +20,8 @@
     "@fontsource-variable/fraunces": "^5.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
-    "chess.js": "^1.4.0"
+    "chess.js": "^1.4.0",
+    "phosphor-icons-svelte": "^2.1.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",

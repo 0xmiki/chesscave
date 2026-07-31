@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Chess, type Square } from "chess.js";
+  import AppHeader from "$lib/components/AppHeader.svelte";
   import ChessBoard from "$lib/components/ChessBoard.svelte";
   import CoachSidebar from "$lib/components/CoachSidebar.svelte";
   import EvaluationBar from "$lib/components/EvaluationBar.svelte";
@@ -796,23 +797,7 @@
 <svelte:window onkeydown={handleKeyboardNavigation} />
 
 <div class="app-shell">
-  <header class="topbar">
-    <a class="brand" href="/" aria-label="ChessCave home">
-      <span class="brand-mark" aria-hidden="true">♞</span>
-      <span>ChessCave</span>
-    </a>
-
-    <div class="game-heading">
-      <h1>{matchupTitle}</h1>
-      <p>
-        {eventTitle}
-        {#if currentOpening?.name || game.headers.Opening}
-          <i aria-hidden="true"></i>
-          {currentOpening?.name || game.headers.Opening}
-        {/if}
-      </p>
-    </div>
-
+  {#snippet headerActions()}
     <div class="top-actions">
       {#if reviewBusy || variationPositionBusy}
         <span class="engine-chip working">
@@ -826,7 +811,14 @@
       {/if}
       <button type="button" onclick={() => { pgnDraft = ""; importOpen = true; }}>Import game</button>
     </div>
-  </header>
+  {/snippet}
+
+  <AppHeader
+    active="study"
+    title={matchupTitle}
+    subtitle={`${eventTitle}${currentOpening?.name || game.headers.Opening ? ` · ${currentOpening?.name || game.headers.Opening}` : ""}`}
+    actions={headerActions}
+  />
 
   <main>
     <section class="workspace">
@@ -1108,7 +1100,7 @@
 {/if}
 
 <style>
-  /* Glow ethos: one quiet study surface, with the game as the subject. */
+  /* ChessCave ethos: one quiet study surface, with the game as the subject. */
   .app-shell {
     position: fixed;
     inset: 0;
@@ -1119,80 +1111,6 @@
     overflow: hidden;
     color: var(--ink);
     background: var(--paper);
-  }
-
-  .topbar {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 28px;
-    align-items: center;
-    min-height: 68px;
-    padding: 0 28px;
-    border-bottom: 1px solid var(--line);
-    background: rgba(251, 248, 242, 0.97);
-  }
-
-  .brand {
-    display: inline-flex;
-    gap: 10px;
-    align-items: center;
-    color: var(--ink);
-    font-family: var(--display);
-    font-size: 19px;
-    font-variation-settings: "opsz" 24, "wght" 650;
-    text-decoration: none;
-  }
-
-  .brand-mark {
-    display: grid;
-    width: 34px;
-    height: 34px;
-    place-items: center;
-    border: 1px solid var(--line-strong);
-    border-radius: 50%;
-    color: var(--coral-dark);
-    background: var(--pearl-raised);
-    box-shadow: none;
-    font-family: Georgia, serif;
-    font-size: 20px;
-  }
-
-  .game-heading {
-    min-width: 0;
-    padding-left: 25px;
-    border-left: 1px solid var(--line);
-  }
-
-  .game-heading h1 {
-    margin: 0;
-    overflow: hidden;
-    color: var(--ink);
-    font-family: var(--display);
-    font-size: 16px;
-    font-variation-settings: "opsz" 18, "wght" 610;
-    line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .game-heading p {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    margin: 3px 0 0;
-    overflow: hidden;
-    color: var(--muted);
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .game-heading i {
-    flex: 0 0 3px;
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background: var(--line-strong);
   }
 
   .top-actions {
@@ -1934,14 +1852,6 @@
       padding-inline: 14px;
     }
 
-    .topbar {
-      gap: 18px;
-      padding-inline: 20px;
-    }
-
-    .game-heading {
-      padding-left: 18px;
-    }
   }
 
   @media (max-width: 900px) {
@@ -1981,29 +1891,8 @@
       grid-template-rows: 62px minmax(0, 1fr);
     }
 
-    .topbar {
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      min-height: 62px;
-      padding: 0 12px;
-    }
-
-    .brand > span:last-child,
-    .game-heading p,
     .engine-chip {
       display: none;
-    }
-
-    .brand-mark {
-      width: 32px;
-      height: 32px;
-    }
-
-    .game-heading {
-      padding-left: 12px;
-    }
-
-    .game-heading h1 {
-      font-size: 14px;
     }
 
     .top-actions > button {

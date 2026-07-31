@@ -13,6 +13,7 @@ Svelte webview
 Rust host
   ├─ UCI engine adapter ── one-pass Stockfish review
   │                         └─ durable JSON snapshot per game/settings key
+  ├─ Notes store ── validated SQLite block graph + schema migrations
   └─ Codex gateway ── codex app-server
                          └─ stdio MCP ── ChessCave engine tools
 ```
@@ -51,6 +52,18 @@ renderer, engine process, and coach UI.
 - `get_position_image` selects a saved mainline position by exact ply or the
   nearest recorded player clock, then returns a 768×768 PNG board plus
   structured FEN, move, clock, and orientation metadata through MCP.
+- The Notes foundation stores pages and paragraphs as UUID-addressed blocks
+  with JSON properties, ordered downward content references, upward parent
+  references, and revisions. All graph changes pass through one validated
+  SQLite transaction; the Svelte client submits operations through Tauri and
+  serializes writes with a retryable save queue.
+- Shared application chrome owns the top-level **Study** and **Notes**
+  destinations. `/notes` owns only notes-specific URL, page-tree, drawer, and
+  editing state, so study keyboard handling and game state cannot leak into the
+  document workspace.
+- The Notes page tree is derived from stored page/content relationships rather
+  than a second hierarchy. URL query state selects the open page; local
+  preferences restore the last page and expanded branches.
 - `CoachState` owns one app-server child and one ephemeral thread.
 - App-server JSONL is forwarded to Svelte as `chesscave://coach-event`; the
   sidebar maps item lifecycle events to visible thinking, MCP call, wait, and
@@ -84,3 +97,8 @@ position + objective + accepted moves + feedback + completion
 
 They can therefore reuse the board, Stockfish adapter, coach context, and
 event-stream UI without introducing mode-specific engine or Codex processes.
+
+The planned local-first block editor and its stop/go implementation gates are
+defined in [ChessCave Notes milestones](notes-milestones.md). Notes remains a
+separate route and domain boundary rather than adding editor state to the
+existing study page.
