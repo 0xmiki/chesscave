@@ -52,9 +52,11 @@ renderer, engine process, and coach UI.
 - `get_position_image` selects a saved mainline position by exact ply or the
   nearest recorded player clock, then returns a 768×768 PNG board plus
   structured FEN, move, clock, and orientation metadata through MCP.
-- The Notes foundation stores pages and paragraphs as UUID-addressed blocks
-  with JSON properties, ordered downward content references, upward parent
-  references, and revisions. All graph changes pass through one validated
+- Notes stores pages and its essential document vocabulary as UUID-addressed
+  blocks with rich-text JSON properties, ordered downward content references,
+  upward parent references, and revisions. Schema 2 admits headings, lists,
+  to-dos, quotes, dividers, and code alongside paragraphs while retaining
+  unknown compatible properties. All graph changes pass through one validated
   SQLite transaction; the Svelte client submits operations through Tauri and
   serializes writes with a retryable save queue.
 - Shared application chrome owns the top-level **Study** and **Notes**
@@ -64,6 +66,10 @@ renderer, engine process, and coach UI.
 - The Notes page tree is derived from stored page/content relationships rather
   than a second hierarchy. URL query state selects the open page; local
   preferences restore the last page and expanded branches.
+- The Notes document renderer walks that same graph recursively. Markdown
+  shortcuts change a block's type without changing its ID, rich-text runs
+  remain structured through editor transactions, and list indentation is a
+  persisted parent move rather than visual padding.
 - `CoachState` owns one app-server child and one ephemeral thread.
 - App-server JSONL is forwarded to Svelte as `chesscave://coach-event`; the
   sidebar maps item lifecycle events to visible thinking, MCP call, wait, and

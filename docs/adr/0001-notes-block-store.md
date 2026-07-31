@@ -35,15 +35,19 @@ real-time update infrastructure.
 8. The client applies editor changes locally and serializes persistence through
    a failure-aware save queue. Failed work and the corresponding local document
    remain available until an explicit retry succeeds.
-9. Paragraph split, merge, paste, undo, and redo are represented as reversible
-   operation groups. Removing a single block requires detaching it first, and
-   leaf deletion is limited to childless blocks. Confirmed page deletion uses a
-   separate atomic subtree operation that removes the owning reference and all
-   descendants before graph validation and commit.
+9. Text-block split, merge, paste, indentation, type transformation, undo, and
+   redo are represented as reversible operation groups. Removing a single
+   block requires detaching it first, and leaf deletion is limited to childless
+   blocks. Confirmed page deletion uses a separate atomic subtree operation
+   that removes the owning reference and all descendants before graph
+   validation and commit.
 10. Editing history is session-local; durable storage contains the resulting
    block graph rather than an ever-growing command log.
 11. The stored model remains independent of the editor rendering
    library.
+12. Schema 2 expands the accepted application vocabulary without replacing the
+    schema 1 JSON-backed storage shape. Rich-text marks and unknown compatible
+    properties remain opaque JSON at the persistence boundary.
 
 ## Why SQLite
 

@@ -11,7 +11,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-const NOTES_SCHEMA_VERSION: u32 = 1;
+const NOTES_SCHEMA_VERSION: u32 = 2;
 const ROOT_CONTENT_KEY: &str = "root_content";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -152,6 +152,7 @@ fn migrate_database(connection: &mut Connection) -> Result<(), String> {
     for version in (current + 1)..=NOTES_SCHEMA_VERSION {
         match version {
             1 => migrate_to_v1(connection)?,
+            2 => migrate_to_v2(connection)?,
             _ => return Err(format!("No notes migration exists for version {version}.")),
         }
     }
@@ -195,11 +196,25 @@ fn migrate_to_v1(connection: &mut Connection) -> Result<(), String> {
         )
         .map_err(|error| format!("Could not initialize the notes root: {error}"))?;
     transaction
-        .pragma_update(None, "user_version", NOTES_SCHEMA_VERSION)
+        .pragma_update(None, "user_version", 1)
         .map_err(|error| format!("Could not record notes schema 1: {error}"))?;
     transaction
         .commit()
         .map_err(|error| format!("Could not commit notes migration 1: {error}"))
+}
+
+fn migrate_to_v2(connection: &mut Connection) -> Result<(), String> {
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Could not begin notes migration 2: {error}"))?;
+    // Version 2 expands the application-level block and rich-text vocabulary.
+    // The v1 JSON-backed columns already preserve the new properties losslessly.
+    transaction
+        .pragma_update(None, "user_version", 2)
+        .map_err(|error| format!("Could not record notes schema 2: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not commit notes migration 2: {error}"))
 }
 
 fn open_database(path: &Path) -> Result<Connection, String> {
@@ -324,7 +339,20 @@ fn validate_uuid_v4(value: &str) -> bool {
 }
 
 fn validate_supported_type(block_type: &str) -> Result<(), String> {
-    if matches!(block_type, "page" | "paragraph") {
+    if matches!(
+        block_type,
+        "page"
+            | "paragraph"
+            | "heading_1"
+            | "heading_2"
+            | "heading_3"
+            | "bulleted_list_item"
+            | "numbered_list_item"
+            | "to_do"
+            | "quote"
+            | "divider"
+            | "code"
+    ) {
         Ok(())
     } else {
         Err(format!(
@@ -1117,7 +1145,7 @@ mod tests {
     }
 
     #[test]
-    fn reruns_the_v1_migration_without_losing_existing_blocks() {
+    fn migrates_a_v1_store_to_the_document_vocabulary_without_data_loss() {
         let database = TestDatabase::new("migration");
         {
             let mut connection = database.open();
@@ -1127,8 +1155,8 @@ mod tests {
             )
             .expect("seed migration fixture");
             connection
-                .pragma_update(None, "user_version", 0)
-                .expect("mark fixture as legacy");
+                .pragma_update(None, "user_version", 1)
+                .expect("mark fixture as schema 1");
         }
 
         let connection = database.open();
@@ -1141,6 +1169,12 @@ mod tests {
         assert_eq!(
             load_root_ids(&connection).expect("preserved root"),
             vec![ROOT]
+        );
+        assert_eq!(
+            connection
+                .pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0))
+                .expect("upgraded schema version"),
+            NOTES_SCHEMA_VERSION
         );
     }
 
@@ -1386,6 +1420,185 @@ mod tests {
                 format!("Paragraph {index}")
             );
         }
+    }
+
+    #[test]
+    fn round_trips_the_essential_document_block_vocabulary() {
+        let database = TestDatabase::new("essential-block-types");
+        let block_types = [
+            "paragraph",
+            "heading_1",
+            "heading_2",
+            "heading_3",
+            "bulleted_list_item",
+            "numbered_list_item",
+            "to_do",
+            "quote",
+            "divider",
+            "code",
+        ];
+        let ids = block_types
+            .iter()
+            .enumerate()
+            .map(|(index, block_type)| {
+                (
+                    format!("00000000-0000-4000-8000-{:012x}", index + 0x2000),
+                    *block_type,
+                )
+            })
+            .collect::<Vec<_>>();
+        {
+            let mut connection = database.open();
+            let mut operations = vec![create(ROOT, "page", "Vocabulary"), insert(None, ROOT, 0)];
+            for (index, (id, block_type)) in ids.iter().enumerate() {
+                operations.push(create(id, block_type, &format!("{block_type} text")));
+                operations.push(insert(Some(ROOT), id, index));
+            }
+            apply_operations(&mut connection, operations).expect("create essential blocks");
+        }
+
+        let connection = database.open();
+        let reopened = load_page_chunk(&connection, ROOT).expect("reopen essential blocks");
+        assert_eq!(reopened.blocks.len(), block_types.len() + 1);
+        for (id, block_type) in ids {
+            let block = reopened
+                .blocks
+                .iter()
+                .find(|block| block.id == id)
+                .expect("reopened essential block");
+            assert_eq!(block.block_type, block_type);
+            assert_eq!(
+                block.properties["title"][0]["text"],
+                format!("{block_type} text")
+            );
+        }
+    }
+
+    #[test]
+    fn changing_type_preserves_unknown_compatible_properties() {
+        let database = TestDatabase::new("type-properties");
+        {
+            let mut connection = database.open();
+            apply_operations(
+                &mut connection,
+                vec![
+                    create(ROOT, "page", "Types"),
+                    NoteOperation::CreateBlock {
+                        block: NewNoteBlock {
+                            id: PARAGRAPH.to_string(),
+                            block_type: "paragraph".to_string(),
+                            properties: json!({
+                                "title": [
+                                    { "text": "remember", "bold": true },
+                                    {
+                                        "text": " this",
+                                        "link": "https://example.com/study",
+                                        "futureMark": { "kept": true }
+                                    }
+                                ],
+                                "checked": true,
+                                "futureProperty": { "kept": true }
+                            }),
+                        },
+                    },
+                    insert(None, ROOT, 0),
+                    insert(Some(ROOT), PARAGRAPH, 0),
+                    NoteOperation::ChangeType {
+                        id: PARAGRAPH.to_string(),
+                        block_type: "to_do".to_string(),
+                        expected_revision: None,
+                    },
+                ],
+            )
+            .expect("change paragraph into a to-do");
+        }
+
+        let connection = database.open();
+        let block = require_block(&connection, PARAGRAPH).expect("changed block");
+        assert_eq!(block.block_type, "to_do");
+        assert_eq!(block.properties["checked"], true);
+        assert_eq!(block.properties["futureProperty"]["kept"], true);
+        assert_eq!(block.properties["title"][0]["bold"], true);
+        assert_eq!(
+            block.properties["title"][1]["link"],
+            "https://example.com/study"
+        );
+        assert_eq!(block.properties["title"][1]["futureMark"]["kept"], true);
+    }
+
+    #[test]
+    fn reopens_nested_list_moves_through_undo_and_redo() {
+        let database = TestDatabase::new("nested-list-moves");
+        {
+            let mut connection = database.open();
+            apply_operations(
+                &mut connection,
+                vec![
+                    create(ROOT, "page", "Plans"),
+                    create(PARAGRAPH, "bulleted_list_item", "Prepare c4"),
+                    create(SECOND_PARAGRAPH, "bulleted_list_item", "Watch b5"),
+                    insert(None, ROOT, 0),
+                    insert(Some(ROOT), PARAGRAPH, 0),
+                    insert(Some(ROOT), SECOND_PARAGRAPH, 1),
+                    NoteOperation::MoveChild {
+                        child_id: SECOND_PARAGRAPH.to_string(),
+                        parent_id: Some(PARAGRAPH.to_string()),
+                        index: 0,
+                    },
+                ],
+            )
+            .expect("indent list item");
+        }
+
+        {
+            let mut connection = database.open();
+            let nested = load_page_chunk(&connection, ROOT).expect("reopen nested list");
+            assert_eq!(nested.blocks[0].content, vec![PARAGRAPH]);
+            let parent = nested
+                .blocks
+                .iter()
+                .find(|block| block.id == PARAGRAPH)
+                .expect("list parent");
+            assert_eq!(parent.content, vec![SECOND_PARAGRAPH]);
+
+            apply_operations(
+                &mut connection,
+                vec![NoteOperation::MoveChild {
+                    child_id: SECOND_PARAGRAPH.to_string(),
+                    parent_id: Some(ROOT.to_string()),
+                    index: 1,
+                }],
+            )
+            .expect("undo list indentation");
+        }
+
+        {
+            let mut connection = database.open();
+            let unnested = load_page_chunk(&connection, ROOT).expect("reopen undone list");
+            assert_eq!(
+                unnested.blocks[0].content,
+                vec![PARAGRAPH, SECOND_PARAGRAPH]
+            );
+            apply_operations(
+                &mut connection,
+                vec![NoteOperation::MoveChild {
+                    child_id: SECOND_PARAGRAPH.to_string(),
+                    parent_id: Some(PARAGRAPH.to_string()),
+                    index: 0,
+                }],
+            )
+            .expect("redo list indentation");
+        }
+
+        let connection = database.open();
+        let redone = load_page_chunk(&connection, ROOT).expect("reopen redone list");
+        assert_eq!(redone.blocks[0].content, vec![PARAGRAPH]);
+        let child = redone
+            .blocks
+            .iter()
+            .find(|block| block.id == SECOND_PARAGRAPH)
+            .expect("nested list child");
+        assert_eq!(child.parent_id.as_deref(), Some(PARAGRAPH));
     }
 
     #[test]

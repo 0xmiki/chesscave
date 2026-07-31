@@ -1,18 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyMarkdownBlockShortcut,
+  indentListItem,
   insertParagraph,
+  matchMarkdownBlockShortcut,
   mergeParagraphBackward,
   noteBlockText,
   pastePlainText,
+  parseInlineMarkdown,
+  removeDividerBackward,
   replaceParagraphText,
   resolveParagraphKey,
   splitParagraph,
   trailingParagraph,
+  transformToDivider,
+  outdentListItem,
 } from "./editor";
 import type {
   NewNoteBlock,
   NoteBlockRecord,
   NotesPageChunk,
+  SupportedNoteBlockType,
 } from "./types";
 
 const pageId = "00000000-0000-4000-8000-000000000001";
@@ -26,7 +34,7 @@ const newParagraph = (id: string, text = ""): NewNoteBlock => ({
 
 const record = (
   id: string,
-  type: "page" | "paragraph",
+  type: SupportedNoteBlockType,
   text: string,
   content: string[] = [],
   parentId: string | null = type === "page" ? null : pageId,
@@ -167,6 +175,41 @@ describe("Notes paragraph editor model", () => {
     });
   });
 
+  test("moves nested children before merging away their list item", () => {
+    const firstId = "00000000-0000-4000-8000-000000000003";
+    const secondId = "00000000-0000-4000-8000-000000000004";
+    const childId = "00000000-0000-4000-8000-000000000005";
+    const chunk: NotesPageChunk = {
+      rootId: pageId,
+      blocks: [
+        record(pageId, "page", "Plans", [firstId, secondId]),
+        record(firstId, "bulleted_list_item", "first"),
+        record(secondId, "bulleted_list_item", " second", [childId]),
+        record(childId, "bulleted_list_item", "nested", [], secondId),
+      ],
+    };
+
+    const change = mergeParagraphBackward(chunk, secondId);
+    expect(change).not.toBeNull();
+    expect(change?.after.blocks[0].content).toEqual([firstId]);
+    expect(change?.after.blocks.find((block) => block.id === firstId)?.content)
+      .toEqual([childId]);
+    expect(change?.after.blocks.find((block) => block.id === childId)?.parentId)
+      .toBe(firstId);
+    expect(change?.forward[1]).toEqual({
+      kind: "moveChild",
+      childId,
+      parentId: firstId,
+      index: 0,
+    });
+    expect(change?.inverse.at(-1)).toEqual({
+      kind: "moveChild",
+      childId,
+      parentId: secondId,
+      index: 0,
+    });
+  });
+
   test("turns multiline plain text into ordered paragraph blocks", () => {
     const ids = [
       "00000000-0000-4000-8000-000000000003",
@@ -244,6 +287,9 @@ describe("Notes paragraph editor model", () => {
       textLength: 4,
     };
     expect(resolveParagraphKey({ ...base, key: "Enter" })).toBe("split");
+    expect(resolveParagraphKey({ ...base, key: "Tab" })).toBe("indent");
+    expect(resolveParagraphKey({ ...base, key: "Tab", shiftKey: true }))
+      .toBe("outdent");
     expect(resolveParagraphKey({ ...base, key: "Backspace" }))
       .toBe("merge-backward");
     expect(resolveParagraphKey({ ...base, key: "ArrowUp" }))
@@ -265,5 +311,152 @@ describe("Notes paragraph editor model", () => {
       primaryModifier: true,
       shiftKey: true,
     })).toBe("redo");
+  });
+
+  test("transforms Markdown block prefixes without replacing the block", () => {
+    const source = document("## Calculation");
+    source.blocks[1].properties.future = { preserved: true };
+    source.blocks[1].content = ["nested"];
+    const shortcut = matchMarkdownBlockShortcut("## Calculation", 3);
+    expect(shortcut).toEqual({ marker: "## ", type: "heading_2" });
+    const change = applyMarkdownBlockShortcut(
+      source,
+      paragraphId,
+      shortcut!,
+      3,
+    );
+    const transformed = change.after.blocks[1];
+    expect(transformed.id).toBe(paragraphId);
+    expect(transformed.type).toBe("heading_2");
+    expect(noteBlockText(transformed)).toBe("Calculation");
+    expect(transformed.content).toEqual(["nested"]);
+    expect(transformed.properties.future).toEqual({ preserved: true });
+    expect(change.afterSelection).toEqual({ blockId: paragraphId, offset: 0 });
+    expect(matchMarkdownBlockShortcut("Move ## here", 8)).toBeNull();
+    expect(matchMarkdownBlockShortcut("## Calculation", 14)).toBeNull();
+  });
+
+  test("turns a divider shortcut into a divider plus editable continuation", () => {
+    const continuationId = "00000000-0000-4000-8000-000000000003";
+    const source = document("---");
+    const shortcut = matchMarkdownBlockShortcut("---", 3);
+    expect(shortcut).toEqual({ marker: "---", type: "divider" });
+
+    const change = transformToDivider(
+      source,
+      paragraphId,
+      newParagraph(continuationId),
+      3,
+    );
+    expect(change.after.blocks[0].content).toEqual([
+      paragraphId,
+      continuationId,
+    ]);
+    expect(change.after.blocks[1].type).toBe("divider");
+    expect(change.afterSelection).toEqual({
+      blockId: continuationId,
+      offset: 0,
+    });
+
+    const removed = removeDividerBackward(change.after, continuationId);
+    expect(removed).not.toBeNull();
+    expect(removed?.after.blocks[0].content).toEqual([continuationId]);
+    expect(removed?.after.blocks.some((block) => block.type === "divider"))
+      .toBeFalse();
+  });
+
+  test("parses the supported inline Markdown marks into rich-text runs", () => {
+    const parsed = parseInlineMarkdown(
+      "Use **plans**, *tempo*, `c4`, and [study](https://example.com).",
+    );
+    expect(parsed.changed).toBeTrue();
+    expect(parsed.text).toBe("Use plans, tempo, c4, and study.");
+    expect(parsed.runs).toContainEqual({ text: "plans", bold: true });
+    expect(parsed.runs).toContainEqual({ text: "tempo", italic: true });
+    expect(parsed.runs).toContainEqual({ text: "c4", code: true });
+    expect(parsed.runs).toContainEqual({
+      text: "study",
+      link: "https://example.com",
+    });
+  });
+
+  test("preserves rich-text runs across split and merge", () => {
+    const nextId = "00000000-0000-4000-8000-000000000003";
+    const source = document("");
+    source.blocks[1].properties.title = [
+      { text: "plans", bold: true, futureMark: "kept" },
+      { text: " and tempo", italic: true },
+    ];
+    const split = splitParagraph(
+      source,
+      paragraphId,
+      3,
+      newParagraph(nextId),
+    );
+    expect(split.after.blocks[1].properties.title).toEqual([
+      { text: "pla", bold: true, futureMark: "kept" },
+    ]);
+    expect(split.after.blocks[2].properties.title).toEqual([
+      { text: "ns", bold: true, futureMark: "kept" },
+      { text: " and tempo", italic: true },
+    ]);
+
+    const merged = mergeParagraphBackward(split.after, nextId);
+    expect(merged?.after.blocks[1].properties.title).toEqual(
+      source.blocks[1].properties.title,
+    );
+  });
+
+  test("preserves surrounding marks during multiline plain-text paste", () => {
+    const nextId = "00000000-0000-4000-8000-000000000003";
+    const source = document("");
+    source.blocks[1].properties.title = [
+      { text: "plans", bold: true },
+      { text: "tempo", italic: true },
+    ];
+    const change = pastePlainText(
+      source,
+      paragraphId,
+      5,
+      5,
+      " one\ntwo ",
+      [newParagraph(nextId)],
+    );
+    expect(change.after.blocks[1].properties.title).toEqual([
+      { text: "plans", bold: true },
+      { text: " one" },
+    ]);
+    expect(change.after.blocks[2].properties.title).toEqual([
+      { text: "two " },
+      { text: "tempo", italic: true },
+    ]);
+  });
+
+  test("indents and outdents list blocks with reversible move operations", () => {
+    const firstId = "00000000-0000-4000-8000-000000000003";
+    const secondId = "00000000-0000-4000-8000-000000000004";
+    const chunk: NotesPageChunk = {
+      rootId: pageId,
+      blocks: [
+        record(pageId, "page", "List", [firstId, secondId]),
+        record(firstId, "bulleted_list_item", "first"),
+        record(secondId, "bulleted_list_item", "second"),
+      ],
+    };
+    const indented = indentListItem(chunk, secondId, 3);
+    expect(indented).not.toBeNull();
+    expect(indented?.after.blocks[0].content).toEqual([firstId]);
+    expect(indented?.after.blocks[1].content).toEqual([secondId]);
+    expect(indented?.forward).toEqual([{
+      kind: "moveChild",
+      childId: secondId,
+      parentId: firstId,
+      index: 0,
+    }]);
+
+    const outdented = outdentListItem(indented!.after, secondId, 3);
+    expect(outdented).not.toBeNull();
+    expect(outdented?.after.blocks[0].content).toEqual([firstId, secondId]);
+    expect(outdented?.after.blocks[1].content).toEqual([]);
   });
 });

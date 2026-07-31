@@ -58,15 +58,17 @@ Text-bearing blocks store rich-text runs under `properties.title`. A `page`
 block stores its visible title in the same property and its document blocks in
 `content`. A nested page is simply a page block whose parent is another page.
 
-The first persisted block types are only:
+Schema 1 begins with only:
 
 ```text
 page
 paragraph
 ```
 
-Additional types arrive through migrations only when their behavior is ready.
-Unknown block types must remain recoverable and must never be silently deleted.
+Schema 2 adds the essential document vocabulary after its editing behavior is
+ready. Later types likewise require an explicit capability migration whenever
+the durable application contract expands. Unknown block types must remain
+recoverable and must never be silently deleted.
 
 ### Persistence choice
 
@@ -121,8 +123,8 @@ after the current exit gate passes in automated tests and a desktop build.
 | 0 · Durable block foundation | Complete · 2026-07-31 | — |
 | 1 · Notes destination and page tree | Complete · 2026-07-31 | Milestone 0 |
 | 2 · Reliable paragraph editor | Complete · 2026-07-31 | Milestone 1 |
-| 3 · Essential document vocabulary | Ready to begin | Milestone 2 |
-| 4 · Slash menu and block transformation | Gated | Milestone 3 |
+| 3 · Essential document vocabulary | Complete · 2026-07-31 | Milestone 2 |
+| 4 · Slash menu and block transformation | Ready to begin | Milestone 3 |
 | 5 · Organization, recovery, and portability | Gated | Core Notes v1 |
 | 6 · Chess-native notes | Gated | Core Notes v1 |
 
@@ -338,6 +340,32 @@ chess writing.
 - Nested lists maintain valid parent/content relationships through undo, redo,
   and restart.
 - All rendered blocks use correct document semantics.
+
+**Completion record · 2026-07-31**
+
+- Notes schema 2 accepts paragraphs, three heading levels, bulleted and
+  numbered list items, to-dos, quotes, dividers, and code blocks. The generic
+  JSON property store preserves supported rich-text marks and unknown future
+  properties without flattening them.
+- Start-of-block Markdown markers transform the existing stable block only at
+  the moment a valid marker is completed. Headings, lists, to-dos, quotes,
+  code blocks, and dividers continue into an appropriate editable block;
+  pressing Enter on an empty formatted block returns it to a paragraph.
+- Bold, italic, inline-code, and safe link runs render inline and survive
+  typing transactions, split, merge, paste, undo, type transformation, and
+  restart. Existing links remain inert while their block is being edited.
+- Consecutive list blocks render as semantic `ul` or `ol` groups. `Tab` and
+  `Shift+Tab` persist real parent/content moves, to-dos expose an accessible
+  checked state, and nested content is rendered recursively instead of being
+  flattened into the page root.
+- Divider insertion creates and focuses a real following paragraph in the
+  same transaction; Backspace from that empty continuation can remove the
+  divider, with a reversible stable-ID operation group.
+- Automated coverage proves shortcut boundaries, every block-type restart,
+  rich-run preservation, stable-ID type changes, divider continuation,
+  structured list indent/outdent, and database reopen after list undo and
+  redo. Svelte checks, 52 Bun tests, 18 Rust tests, Rust formatting, strict
+  Clippy, the static production build, and the Tauri debug build pass.
 
 ### Milestone 4 — Slash menu and block transformation
 

@@ -6,13 +6,23 @@
   import NotePageTree from "$lib/components/NotePageTree.svelte";
   import ParagraphBlockEditor from "$lib/components/ParagraphBlockEditor.svelte";
   import {
+    applyMarkdownBlockShortcut,
+    continuationBlockType,
+    indentListItem,
     insertParagraph,
+    matchMarkdownBlockShortcut,
     mergeParagraphBackward,
     noteBlockText,
+    outdentListItem,
     pastePlainText,
-    replaceParagraphText,
+    parseInlineMarkdown,
+    removeDividerBackward,
+    replaceBlockRuns,
     splitParagraph,
-    textProperties,
+    richTextProperties,
+    toggleTodo,
+    transformTextBlock,
+    transformToDivider,
     trailingParagraph,
     type EditorChange,
     type EditorSelection,
@@ -28,16 +38,19 @@
   import IconArrowClockwiseRegular from "phosphor-icons-svelte/IconArrowClockwiseRegular.svelte";
   import IconArrowCounterClockwiseRegular from "phosphor-icons-svelte/IconArrowCounterClockwiseRegular.svelte";
   import IconCheckCircleRegular from "phosphor-icons-svelte/IconCheckCircleRegular.svelte";
+  import IconCheckBold from "phosphor-icons-svelte/IconCheckBold.svelte";
   import IconFileTextRegular from "phosphor-icons-svelte/IconFileTextRegular.svelte";
   import IconListRegular from "phosphor-icons-svelte/IconListRegular.svelte";
   import IconPlusBold from "phosphor-icons-svelte/IconPlusBold.svelte";
   import IconSpinnerGapRegular from "phosphor-icons-svelte/IconSpinnerGapRegular.svelte";
   import {
     createNoteBlock,
+    isTextNoteBlockType,
     type NoteBlockRecord,
     type NoteOperation,
     type NotesPageChunk,
     type NotesTransactionResult,
+    type RichTextRun,
   } from "$lib/notes/types";
   import {
     applyNotesTransaction,
@@ -101,13 +114,6 @@
   );
   const chunkBlocks = $derived(
     new Map((activePageChunk?.blocks ?? []).map((block) => [block.id, block])),
-  );
-  const selectedContent = $derived(
-    selectedRoot
-      ? selectedRoot.content
-          .map((id) => chunkBlocks.get(id) ?? pages.find((item) => item.id === id))
-          .filter((block): block is NoteBlockRecord => Boolean(block))
-      : [],
   );
   $effect(() => {
     const title = selectedPage ? notePageTitle(selectedPage) : "";
@@ -374,16 +380,46 @@
     return block.properties.title.map((run) => run.text).join("");
   }
 
+  interface RenderGroup {
+    kind:
+      | "block"
+      | "bulleted_list_item"
+      | "numbered_list_item"
+      | "to_do";
+    blocks: NoteBlockRecord[];
+  }
+
+  function groupRenderChildren(childIds: string[]): RenderGroup[] {
+    const groups: RenderGroup[] = [];
+    for (const id of childIds) {
+      const block = chunkBlocks.get(id);
+      if (!block) continue;
+      let kind: RenderGroup["kind"] = "block";
+      if (block.type === "bulleted_list_item") kind = "bulleted_list_item";
+      else if (block.type === "numbered_list_item") {
+        kind = "numbered_list_item";
+      } else if (block.type === "to_do") kind = "to_do";
+      const previous = groups.at(-1);
+      if (kind !== "block" && previous?.kind === kind) {
+        previous.blocks.push(block);
+      } else {
+        groups.push({ kind, blocks: [block] });
+      }
+    }
+    return groups;
+  }
+
   function handleParagraphInput(
     id: string,
-    text: string,
+    runs: RichTextRun[],
     beforeOffset: number,
     offset: number,
     composing: boolean,
   ) {
     const current = pageChunk;
     const block = current?.blocks.find((candidate) => candidate.id === id);
-    if (!current || !block || block.type !== "paragraph") return;
+    if (!current || !block || !isTextNoteBlockType(block.type)) return;
+    const text = runs.map((run) => run.text).join("");
 
     let session = typingSessions.get(id);
     if (!session) {
@@ -397,19 +433,40 @@
       typingActive = true;
     }
     session.afterOffset = offset;
-    pageChunk = {
+    const updated: NotesPageChunk = {
       ...current,
       blocks: current.blocks.map((candidate) =>
         candidate.id === id
           ? {
               ...candidate,
-              properties: textProperties(candidate.properties, text),
+              properties: richTextProperties(candidate.properties, runs),
             }
           : candidate,
       ),
     };
+    pageChunk = updated;
     cacheCurrentDocument();
-    if (!composing) scheduleTypingCommit(id);
+    if (!composing) {
+      const shortcut = matchMarkdownBlockShortcut(text, offset);
+      if (shortcut) {
+        discardTyping(id);
+        try {
+          const change = shortcut.type === "divider"
+            ? transformToDivider(
+                updated,
+                id,
+                createNoteBlock("paragraph"),
+                offset,
+              )
+            : applyMarkdownBlockShortcut(updated, id, shortcut, offset);
+          applyEditorChange(change);
+        } catch (cause) {
+          error = cause instanceof Error ? cause.message : String(cause);
+        }
+        return;
+      }
+      scheduleTypingCommit(id);
+    }
   }
 
   function scheduleTypingCommit(id: string) {
@@ -426,6 +483,29 @@
     const session = typingSessions.get(id);
     if (session) session.afterOffset = offset;
     finalizeTyping(id);
+    normalizeInlineMarkdown(id, offset);
+  }
+
+  function discardTyping(id: string) {
+    const session = typingSessions.get(id);
+    if (session?.timer) clearTimeout(session.timer);
+    typingSessions.delete(id);
+    typingActive = typingSessions.size > 0;
+  }
+
+  function normalizeInlineMarkdown(id: string, offset: number) {
+    const current = pageChunk;
+    const block = current?.blocks.find((candidate) => candidate.id === id);
+    if (!current || !block || !isTextNoteBlockType(block.type)) return;
+    if (block.properties.title.some(
+      (run) => run.bold || run.italic || run.code || run.link,
+    )) return;
+    const parsed = parseInlineMarkdown(noteBlockText(block), offset);
+    if (!parsed.changed) return;
+    applyEditorChange(
+      replaceBlockRuns(current, id, parsed.runs, offset, parsed.offset),
+      false,
+    );
   }
 
   function finalizeTyping(id: string) {
@@ -447,16 +527,18 @@
       return;
     }
     const currentText = noteBlockText(currentBlock);
-    if (currentText === noteBlockText(beforeBlock)) return;
-    const base = replaceParagraphText(
+    if (JSON.stringify(currentBlock.properties.title) ===
+      JSON.stringify(beforeBlock.properties.title)) return;
+    const base = replaceBlockRuns(
       session.before,
       id,
-      currentText,
+      currentBlock.properties.title,
       session.beforeOffset,
       session.afterOffset,
     );
     const change: EditorChange = {
       ...base,
+      label: "typing",
       after: current,
       afterSelection: {
         blockId: id,
@@ -485,12 +567,12 @@
     cacheCurrentHistory();
   }
 
-  function applyEditorChange(change: EditorChange) {
+  function applyEditorChange(change: EditorChange, focus = true) {
     pageChunk = change.after;
     cacheCurrentDocument();
     pushHistory(change);
     persistEditorOperations(change.forward);
-    requestEditorFocus(change.afterSelection);
+    if (focus) requestEditorFocus(change.afterSelection);
   }
 
   function persistEditorOperations(operations: NoteOperation[]) {
@@ -542,14 +624,28 @@
   function handleSplitParagraph(id: string, start: number, end: number) {
     finalizeTyping(id);
     const current = pageChunk;
-    if (!current) return;
+    const block = current?.blocks.find((candidate) => candidate.id === id);
+    if (!current || !block || !isTextNoteBlockType(block.type)) return;
     try {
+      if (!noteBlockText(block) && block.type !== "paragraph") {
+        applyEditorChange(
+          transformTextBlock(
+            current,
+            id,
+            "paragraph",
+            block.properties.title,
+            start,
+            0,
+          ),
+        );
+        return;
+      }
       applyEditorChange(
         splitParagraph(
           current,
           id,
           start,
-          createNoteBlock("paragraph"),
+          createNoteBlock(continuationBlockType(block.type)),
           end,
         ),
       );
@@ -563,7 +659,8 @@
     const current = pageChunk;
     if (!current) return false;
     try {
-      const change = mergeParagraphBackward(current, id);
+      const change = mergeParagraphBackward(current, id) ??
+        removeDividerBackward(current, id);
       if (!change) return false;
       applyEditorChange(change);
       return true;
@@ -578,15 +675,11 @@
     direction: "previous" | "next",
   ): boolean {
     finalizeTyping(id);
-    const root = pageChunk?.blocks.find((block) => block.id === pageChunk?.rootId);
-    if (!root) return false;
-    const paragraphIds = root.content.filter((childId) =>
-      pageChunk?.blocks.some(
-        (block) => block.id === childId && block.type === "paragraph",
-      ),
-    );
-    const index = paragraphIds.indexOf(id);
-    const targetId = paragraphIds[index + (direction === "previous" ? -1 : 1)];
+    const current = pageChunk;
+    if (!current) return false;
+    const editableIds = editableBlockIds(current);
+    const index = editableIds.indexOf(id);
+    const targetId = editableIds[index + (direction === "previous" ? -1 : 1)];
     if (!targetId) return false;
     const target = pageChunk?.blocks.find((block) => block.id === targetId);
     requestEditorFocus({
@@ -598,6 +691,64 @@
     return true;
   }
 
+  function editableBlockIds(chunk: NotesPageChunk): string[] {
+    const byId = new Map(chunk.blocks.map((block) => [block.id, block]));
+    const root = byId.get(chunk.rootId);
+    if (!root) return [];
+    const ordered: string[] = [];
+    function visit(ids: string[]) {
+      for (const id of ids) {
+        const block = byId.get(id);
+        if (!block || block.type === "page") continue;
+        if (isTextNoteBlockType(block.type)) ordered.push(id);
+        if (block.content.length) visit(block.content);
+      }
+    }
+    visit(root.content);
+    return ordered;
+  }
+
+  function handleIndent(id: string, offset: number): boolean {
+    finalizeTyping(id);
+    const current = pageChunk;
+    if (!current) return false;
+    try {
+      const change = indentListItem(current, id, offset);
+      if (!change) return false;
+      applyEditorChange(change);
+      return true;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+      return false;
+    }
+  }
+
+  function handleOutdent(id: string, offset: number): boolean {
+    finalizeTyping(id);
+    const current = pageChunk;
+    if (!current) return false;
+    try {
+      const change = outdentListItem(current, id, offset);
+      if (!change) return false;
+      applyEditorChange(change);
+      return true;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+      return false;
+    }
+  }
+
+  function handleToggleTodo(id: string) {
+    finalizeTyping(id);
+    const current = pageChunk;
+    if (!current) return;
+    try {
+      applyEditorChange(toggleTodo(current, id), false);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
   function handleParagraphPaste(
     id: string,
     start: number,
@@ -606,14 +757,15 @@
   ) {
     finalizeTyping(id);
     const current = pageChunk;
-    if (!current) return;
+    const source = current?.blocks.find((block) => block.id === id);
+    if (!current || !source || !isTextNoteBlockType(source.type)) return;
     const lineCount = text
       .replaceAll("\r\n", "\n")
       .replaceAll("\r", "\n")
       .split("\n").length;
     const blocks = Array.from(
       { length: Math.max(0, lineCount - 1) },
-      () => createNoteBlock("paragraph"),
+      () => createNoteBlock(continuationBlockType(source.type)),
     );
     try {
       applyEditorChange(
@@ -656,12 +808,10 @@
   }
 
   function focusFirstParagraph() {
-    const paragraph = selectedContent.find(
-      (block) => block.type === "paragraph",
-    );
-    if (paragraph) {
-      requestEditorFocus({ blockId: paragraph.id, offset: 0 });
-    }
+    const current = pageChunk;
+    if (!current) return;
+    const firstId = editableBlockIds(current)[0];
+    if (firstId) requestEditorFocus({ blockId: firstId, offset: 0 });
   }
 
   function resizePageTitle(element: HTMLTextAreaElement) {
@@ -725,6 +875,111 @@
     if (pageTitleElement) resizePageTitle(pageTitleElement);
   }}
 />
+
+{#snippet textEditor(block: NoteBlockRecord)}
+  <ParagraphBlockEditor
+    {block}
+    disabled={!nativeHost}
+    {focusRequest}
+    onInput={handleParagraphInput}
+    onCommit={handleParagraphCommit}
+    onSplit={handleSplitParagraph}
+    onMergeBackward={handleMergeBackward}
+    onMove={handleParagraphMove}
+    onPaste={handleParagraphPaste}
+    onIndent={handleIndent}
+    onOutdent={handleOutdent}
+    onUndo={undoEditorChange}
+    onRedo={redoEditorChange}
+  />
+{/snippet}
+
+{#snippet todoEditor(block: NoteBlockRecord)}
+  <div class="todo-row">
+    <button
+      class="todo-check"
+      class:checked={block.properties.checked === true}
+      type="button"
+      role="checkbox"
+      aria-checked={block.properties.checked === true}
+      aria-label={block.properties.checked === true
+        ? "Mark as not done"
+        : "Mark as done"}
+      onclick={() => handleToggleTodo(block.id)}
+    ><IconCheckBold /></button>
+    {@render textEditor(block)}
+  </div>
+{/snippet}
+
+{#snippet renderChildren(childIds: string[])}
+  {#each groupRenderChildren(childIds) as group}
+    {#if group.kind === "bulleted_list_item"}
+      <ul class="note-list">
+        {#each group.blocks as block (block.id)}
+          <li>
+            {@render textEditor(block)}
+            {#if block.content.length}
+              {@render renderChildren(block.content)}
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {:else if group.kind === "numbered_list_item"}
+      <ol class="note-list">
+        {#each group.blocks as block (block.id)}
+          <li>
+            {@render textEditor(block)}
+            {#if block.content.length}
+              {@render renderChildren(block.content)}
+            {/if}
+          </li>
+        {/each}
+      </ol>
+    {:else if group.kind === "to_do"}
+      <div class="todo-list">
+        {#each group.blocks as block (block.id)}
+          <div class="todo-branch">
+            {@render todoEditor(block)}
+            {#if block.content.length}
+              <div class="nested-blocks">
+                {@render renderChildren(block.content)}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {:else}
+      {@const block = group.blocks[0]}
+      {#if block.type === "page"}
+        <button
+          class="subpage-link"
+          type="button"
+          onclick={() => selectPage(block.id)}
+        >
+          <span aria-hidden="true"><IconFileTextRegular /></span>
+          {notePageTitle(block)}
+          <i><IconArrowRightRegular /></i>
+        </button>
+      {:else if isTextNoteBlockType(block.type)}
+        {@render textEditor(block)}
+        {#if block.content.length}
+          <div class="nested-blocks">
+            {@render renderChildren(block.content)}
+          </div>
+        {/if}
+      {:else if block.type === "divider"}
+        <hr class="note-divider" />
+        {#if block.content.length}
+          <div class="nested-blocks">
+            {@render renderChildren(block.content)}
+          </div>
+        {/if}
+      {:else}
+        <div class="paragraph-block">{blockText(block)}</div>
+      {/if}
+    {/if}
+  {/each}
+{/snippet}
 
 <div class="notes-app">
   {#snippet headerActions()}
@@ -896,37 +1151,7 @@
             class:loading={pageLoading}
             class="block-preview"
           >
-            {#each selectedContent as block (block.id)}
-              {#if block.type === "page"}
-                <button
-                  class="subpage-link"
-                  type="button"
-                  onclick={() => selectPage(block.id)}
-                >
-                  <span aria-hidden="true"><IconFileTextRegular /></span>
-                  {notePageTitle(block)}
-                  <i><IconArrowRightRegular /></i>
-                </button>
-              {:else if block.type === "paragraph"}
-                <ParagraphBlockEditor
-                  {block}
-                  disabled={!nativeHost}
-                  {focusRequest}
-                  onInput={handleParagraphInput}
-                  onCommit={handleParagraphCommit}
-                  onSplit={handleSplitParagraph}
-                  onMergeBackward={handleMergeBackward}
-                  onMove={handleParagraphMove}
-                  onPaste={handleParagraphPaste}
-                  onUndo={undoEditorChange}
-                  onRedo={redoEditorChange}
-                />
-              {:else}
-                <div class="paragraph-block">
-                  {blockText(block)}
-                </div>
-              {/if}
-            {/each}
+            {@render renderChildren(selectedRoot?.content ?? [])}
             <button
               class="editor-tail"
               type="button"
@@ -1218,6 +1443,77 @@
     color: var(--ink-soft);
     font-size: 15px;
     line-height: 1.6;
+  }
+
+  .todo-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 7px;
+    align-items: start;
+  }
+
+  .note-list {
+    margin: 0;
+    padding-left: 25px;
+    color: var(--ink-soft);
+  }
+
+  .note-list li {
+    padding-left: 2px;
+  }
+
+  .note-list li::marker {
+    color: var(--muted);
+    font-size: 0.9em;
+  }
+
+  .note-list .note-list {
+    margin-left: 2px;
+  }
+
+  .todo-list {
+    display: grid;
+  }
+
+  .nested-blocks {
+    margin-left: 27px;
+  }
+
+  .todo-check {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    margin-top: 9px;
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 3px;
+    color: transparent;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .todo-check.checked {
+    border-color: var(--sage);
+    color: var(--pearl-raised);
+    background: var(--sage);
+  }
+
+  .todo-check :global(svg) {
+    width: 10px;
+    height: 10px;
+  }
+
+  .todo-row:has(.todo-check.checked) :global(.paragraph-editor) {
+    color: var(--muted);
+    text-decoration: line-through;
+  }
+
+  .note-divider {
+    width: 100%;
+    margin: 13px 0;
+    border: 0;
+    border-top: 1px solid var(--line);
   }
 
   .subpage-link {

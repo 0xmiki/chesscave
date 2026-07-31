@@ -1,10 +1,31 @@
-export type NoteBlockType =
+export type SupportedNoteBlockType =
   | "page"
   | "paragraph"
+  | "heading_1"
+  | "heading_2"
+  | "heading_3"
+  | "bulleted_list_item"
+  | "numbered_list_item"
+  | "to_do"
+  | "quote"
+  | "divider"
+  | "code";
+
+export type TextNoteBlockType = Exclude<
+  SupportedNoteBlockType,
+  "page" | "divider"
+>;
+
+export type NoteBlockType =
+  | SupportedNoteBlockType
   | (string & {});
 
 export interface RichTextRun {
   text: string;
+  bold?: boolean;
+  italic?: boolean;
+  code?: boolean;
+  link?: string;
   [key: string]: unknown;
 }
 
@@ -26,7 +47,7 @@ export interface NoteBlockRecord {
 
 export interface NewNoteBlock {
   id: string;
-  type: "page" | "paragraph";
+  type: SupportedNoteBlockType;
   properties: NoteBlockProperties;
 }
 
@@ -44,7 +65,7 @@ export type NoteOperation =
   | {
       kind: "changeType";
       id: string;
-      type: "page" | "paragraph";
+      type: SupportedNoteBlockType;
       expectedRevision?: number;
     }
   | {
@@ -95,7 +116,7 @@ export interface NotesTransactionResult {
 }
 
 export function createNoteBlock(
-  type: "page" | "paragraph",
+  type: SupportedNoteBlockType,
   text = "",
 ): NewNoteBlock {
   return {
@@ -103,6 +124,31 @@ export function createNoteBlock(
     type,
     properties: {
       title: text ? [{ text }] : [],
+      ...(type === "to_do" ? { checked: false } : {}),
     },
   };
+}
+
+const textBlockTypes = new Set<NoteBlockType>([
+  "paragraph",
+  "heading_1",
+  "heading_2",
+  "heading_3",
+  "bulleted_list_item",
+  "numbered_list_item",
+  "to_do",
+  "quote",
+  "code",
+]);
+
+export function isTextNoteBlockType(
+  type: NoteBlockType,
+): type is TextNoteBlockType {
+  return textBlockTypes.has(type);
+}
+
+export function isListNoteBlockType(type: NoteBlockType): boolean {
+  return type === "bulleted_list_item" ||
+    type === "numbered_list_item" ||
+    type === "to_do";
 }
