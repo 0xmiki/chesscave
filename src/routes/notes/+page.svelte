@@ -5,6 +5,7 @@
   import AppHeader from "$lib/components/AppHeader.svelte";
   import NotePageTree from "$lib/components/NotePageTree.svelte";
   import ParagraphBlockEditor from "$lib/components/ParagraphBlockEditor.svelte";
+  import SlashCommandMenu from "$lib/components/SlashCommandMenu.svelte";
   import {
     applyMarkdownBlockShortcut,
     continuationBlockType,
@@ -16,18 +17,27 @@
     outdentListItem,
     pastePlainText,
     parseInlineMarkdown,
+    removeBlockStyleBackward,
     removeDividerBackward,
     replaceBlockRuns,
     splitParagraph,
     richTextProperties,
     toggleTodo,
     transformTextBlock,
+    transformTextBlockToPage,
     transformToDivider,
     trailingParagraph,
     type EditorChange,
     type EditorSelection,
   } from "$lib/notes/editor";
   import { NotesSaveQueue, type NotesSaveState } from "$lib/notes/save-queue";
+  import {
+    filterSlashCommands,
+    matchSlashMenuQuery,
+    resolveSlashMenuKey,
+    slashMenuFocusTarget,
+    type SlashCommand,
+  } from "$lib/notes/slash-commands";
   import { createPageTransaction } from "$lib/notes/page-operations";
   import {
     collectPageSubtreeIds,
@@ -69,6 +79,15 @@
     timer: ReturnType<typeof setTimeout> | null;
   }
 
+  interface CommandMenuState {
+    blockId: string;
+    mode: "slash" | "turn";
+    query: string;
+    selectedIndex: number;
+    left: number;
+    top: number;
+  }
+
   let pages = $state<NoteBlockRecord[]>([]);
   let rootPageIds = $state<string[]>([]);
   let expandedIds = $state<string[]>([]);
@@ -91,6 +110,9 @@
   let undoStack = $state<EditorChange[]>([]);
   let redoStack = $state<EditorChange[]>([]);
   let typingActive = $state(false);
+  let commandMenu = $state<CommandMenuState | null>(null);
+  let dismissedSlashBlockId = "";
+  let pendingTitleFocusId = $state<string | null>(null);
   let focusToken = 0;
   const typingSessions = new Map<string, TypingSession>();
   const pendingDocuments = new Map<string, NotesPageChunk>();
@@ -115,12 +137,40 @@
   const chunkBlocks = $derived(
     new Map((activePageChunk?.blocks ?? []).map((block) => [block.id, block])),
   );
+  const commandMenuOptions = $derived(
+    commandMenu
+      ? filterSlashCommands(commandMenu.query).filter((command) =>
+          commandAvailable(command, commandMenu!)
+        )
+      : [],
+  );
   $effect(() => {
     const title = selectedPage ? notePageTitle(selectedPage) : "";
     void title;
     void tick().then(() => {
       if (pageTitleElement) resizePageTitle(pageTitleElement);
     });
+  });
+  $effect(() => {
+    const targetId = pendingTitleFocusId;
+    if (!targetId || selectedPage?.id !== targetId) return;
+    pendingTitleFocusId = null;
+    void tick().then(() => {
+      pageTitleElement?.focus();
+      pageTitleElement?.select();
+    });
+  });
+  $effect(() => {
+    const state = commandMenu;
+    const optionCount = commandMenuOptions.length;
+    if (!state) return;
+    const clamped = Math.min(
+      state.selectedIndex,
+      Math.max(0, optionCount - 1),
+    );
+    if (clamped !== state.selectedIndex) {
+      commandMenu = { ...state, selectedIndex: clamped };
+    }
   });
 
   onMount(() => {
@@ -192,6 +242,17 @@
 
   async function loadPageContent(id: string) {
     const cycle = ++pageLoadCycle;
+    const local = pendingDocuments.get(id);
+    if (local) {
+      clearTypingSessions();
+      pageChunk = local;
+      const history = historyByPage.get(id);
+      undoStack = history?.undo ?? [];
+      redoStack = history?.redo ?? [];
+      focusRequest = null;
+      pageLoading = false;
+      return;
+    }
     pageLoading = true;
     try {
       const next = await loadNotesPage(id);
@@ -225,6 +286,7 @@
   }
 
   function selectPage(id: string, replaceState = false) {
+    dismissCommandMenu(false);
     finalizeAllTyping();
     cacheCurrentDocument();
     cacheCurrentHistory();
@@ -409,6 +471,305 @@
     return groups;
   }
 
+  function commandAvailable(
+    command: SlashCommand,
+    state: CommandMenuState,
+  ): boolean {
+    const current = pageChunk;
+    const block = current?.blocks.find((candidate) =>
+      candidate.id === state.blockId
+    );
+    if (!current || !block || !isTextNoteBlockType(block.type)) return false;
+    if (command.id === "divider") {
+      return state.mode === "slash" || !noteBlockText(block);
+    }
+    if (command.id === "page") {
+      const parent = current.blocks.find((candidate) =>
+        candidate.id === block.parentId
+      );
+      return parent?.type === "page";
+    }
+    return true;
+  }
+
+  function commandMenuId(blockId: string): string {
+    return `note-command-menu-${blockId}`;
+  }
+
+  function activeCommandOptionId(): string | undefined {
+    const state = commandMenu;
+    const command = commandMenuOptions[state?.selectedIndex ?? -1];
+    return state && command
+      ? `${commandMenuId(state.blockId)}-option-${command.id}`
+      : undefined;
+  }
+
+  function editorElement(blockId: string): HTMLElement | null {
+    return [...document.querySelectorAll<HTMLElement>(
+      "[data-note-paragraph-editor]",
+    )].find((element) => element.dataset.blockId === blockId) ?? null;
+  }
+
+  function turnIntoTrigger(blockId: string): HTMLButtonElement | null {
+    return [...document.querySelectorAll<HTMLButtonElement>(
+      "[data-turn-into-trigger]",
+    )].find((element) => element.dataset.turnIntoTrigger === blockId) ?? null;
+  }
+
+  function activeEditorRect(blockId: string): DOMRect | null {
+    const editor = editorElement(blockId);
+    if (!editor) return null;
+    const selection = window.getSelection();
+    if (selection?.rangeCount) {
+      const range = selection.getRangeAt(0);
+      if (
+        editor.contains(range.startContainer) &&
+        editor.contains(range.endContainer)
+      ) {
+        const caret = range.getBoundingClientRect();
+        if (caret.height || caret.width) return caret;
+      }
+    }
+    return editor.getBoundingClientRect();
+  }
+
+  function menuPosition(rect: DOMRect): { left: number; top: number } {
+    const gutter = 12;
+    const width = Math.min(304, window.innerWidth - gutter * 2);
+    const estimatedHeight = Math.min(
+      390,
+      47 + Math.max(1, commandMenuOptions.length) * 48,
+    );
+    const left = Math.min(
+      Math.max(gutter, rect.left),
+      Math.max(gutter, window.innerWidth - width - gutter),
+    );
+    const roomBelow = window.innerHeight - rect.bottom - gutter;
+    const roomAbove = rect.top - gutter;
+    const top = roomBelow >= estimatedHeight
+      ? rect.bottom + 6
+      : roomAbove >= estimatedHeight
+        ? rect.top - estimatedHeight - 6
+        : gutter;
+    return { left, top };
+  }
+
+  function updateCommandMenuPosition() {
+    const state = commandMenu;
+    if (!state) return;
+    const rect = state.mode === "turn"
+      ? turnIntoTrigger(state.blockId)?.getBoundingClientRect() ?? null
+      : activeEditorRect(state.blockId);
+    if (!rect) {
+      commandMenu = null;
+      return;
+    }
+    const position = menuPosition(rect);
+    if (position.left === state.left && position.top === state.top) return;
+    commandMenu = { ...state, ...position };
+  }
+
+  function syncSlashMenu(
+    blockId: string,
+    text: string,
+    offset: number,
+  ) {
+    const query = matchSlashMenuQuery(text, offset);
+    const existing = commandMenu;
+    if (query === null) {
+      if (dismissedSlashBlockId === blockId && !text.startsWith("/")) {
+        dismissedSlashBlockId = "";
+      }
+      if (existing?.mode === "slash" && existing.blockId === blockId) {
+        commandMenu = null;
+      }
+      return;
+    }
+    if (dismissedSlashBlockId === blockId) return;
+    commandMenu = {
+      blockId,
+      mode: "slash",
+      query,
+      selectedIndex: existing?.mode === "slash" &&
+          existing.blockId === blockId && existing.query === query
+        ? existing.selectedIndex
+        : 0,
+      left: existing?.blockId === blockId ? existing.left : 12,
+      top: existing?.blockId === blockId ? existing.top : 12,
+    };
+    void tick().then(updateCommandMenuPosition);
+  }
+
+  function openTurnIntoMenu(blockId: string, trigger: HTMLButtonElement) {
+    finalizeTyping(blockId);
+    if (
+      commandMenu?.mode === "turn" &&
+      commandMenu.blockId === blockId
+    ) {
+      dismissCommandMenu(true);
+      return;
+    }
+    const position = menuPosition(trigger.getBoundingClientRect());
+    commandMenu = {
+      blockId,
+      mode: "turn",
+      query: "",
+      selectedIndex: 0,
+      ...position,
+    };
+  }
+
+  function dismissCommandMenu(restoreFocus = false) {
+    const state = commandMenu;
+    if (!state) return;
+    if (state.mode === "slash") dismissedSlashBlockId = state.blockId;
+    commandMenu = null;
+    if (!restoreFocus) return;
+    void tick().then(() => {
+      if (slashMenuFocusTarget(state.mode) === "trigger") {
+        turnIntoTrigger(state.blockId)?.focus();
+      }
+      else {
+        const block = pageChunk?.blocks.find((candidate) =>
+          candidate.id === state.blockId
+        );
+        if (block) {
+          requestEditorFocus({
+            blockId: block.id,
+            offset: noteBlockText(block).length,
+          });
+        }
+      }
+    });
+  }
+
+  function handleCommandMenuKeydown(blockId: string, key: string): boolean {
+    const state = commandMenu;
+    if (!state || state.mode !== "slash" || state.blockId !== blockId) {
+      return false;
+    }
+    const action = resolveSlashMenuKey(
+      key,
+      state.selectedIndex,
+      commandMenuOptions.length,
+    );
+    if (!action) return false;
+    if (action.kind === "dismiss") dismissCommandMenu(true);
+    else if (action.kind === "select") {
+      const command = commandMenuOptions[action.index];
+      if (command) void executeCommand(command);
+      else dismissCommandMenu(true);
+    } else {
+      commandMenu = { ...state, selectedIndex: action.index };
+    }
+    return true;
+  }
+
+  function handleWindowPointerDown(event: PointerEvent) {
+    if (!commandMenu || !(event.target instanceof Element)) return;
+    if (
+      event.target.closest("[data-note-command-surface]") ||
+      event.target.closest("[data-turn-into-trigger]")
+    ) return;
+    dismissCommandMenu(false);
+  }
+
+  function handleWindowFocusIn(event: FocusEvent) {
+    const state = commandMenu;
+    if (!state || !(event.target instanceof Element)) return;
+    if (event.target.closest("[data-note-command-surface]")) return;
+    if (
+      state.mode === "slash" &&
+      editorElement(state.blockId)?.contains(event.target)
+    ) return;
+    if (
+      state.mode === "turn" &&
+      turnIntoTrigger(state.blockId)?.contains(event.target)
+    ) return;
+    dismissCommandMenu(false);
+  }
+
+  async function executeCommand(command: SlashCommand) {
+    const state = commandMenu;
+    if (!state || !commandAvailable(command, state)) return;
+    commandMenu = null;
+    dismissedSlashBlockId = "";
+    if (state.mode === "slash") discardTyping(state.blockId);
+    else finalizeTyping(state.blockId);
+
+    const current = pageChunk;
+    const block = current?.blocks.find((candidate) =>
+      candidate.id === state.blockId
+    );
+    if (!current || !block || !isTextNoteBlockType(block.type)) return;
+    if (state.mode === "turn" && command.type === block.type) {
+      requestEditorFocus({
+        blockId: block.id,
+        offset: noteBlockText(block).length,
+      });
+      return;
+    }
+
+    try {
+      if (command.id === "page") {
+        const parentId = block.parentId;
+        const change = transformTextBlockToPage(
+          current,
+          block.id,
+          createNoteBlock("paragraph"),
+          state.mode === "slash" ? [] : block.properties.title,
+          noteBlockText(block).length,
+        );
+        const persistence = applyEditorChange(change, false);
+        const pageBlock = change.after.blocks.find((candidate) =>
+          candidate.id === block.id
+        );
+        if (!pageBlock) throw new Error("The nested page was not created.");
+        pendingDocuments.set(
+          pageBlock.id,
+          nestedPageChunk(change.after, pageBlock.id),
+        );
+        pages = [
+          ...pages.filter((candidate) => candidate.id !== pageBlock.id),
+          pageBlock,
+        ];
+        if (parentId) {
+          const expanded = new Set(expandedIds);
+          expanded.add(parentId);
+          persistExpanded([...expanded]);
+        }
+        pendingTitleFocusId = block.id;
+        selectPage(block.id);
+        if (await persistence) await refreshSidebar();
+        return;
+      }
+
+      const change = command.id === "divider"
+        ? transformToDivider(
+            current,
+            block.id,
+            createNoteBlock("paragraph"),
+            noteBlockText(block).length,
+          )
+        : transformTextBlock(
+            current,
+            block.id,
+            command.type!,
+            state.mode === "slash" ? [] : block.properties.title,
+            noteBlockText(block).length,
+            state.mode === "slash" ? 0 : noteBlockText(block).length,
+            command.type === "to_do" ? { checked: false } : {},
+          );
+      void applyEditorChange(change);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+      requestEditorFocus({
+        blockId: block.id,
+        offset: noteBlockText(block).length,
+      });
+    }
+  }
+
   function handleParagraphInput(
     id: string,
     runs: RichTextRun[],
@@ -447,8 +808,10 @@
     pageChunk = updated;
     cacheCurrentDocument();
     if (!composing) {
+      syncSlashMenu(id, text, offset);
       const shortcut = matchMarkdownBlockShortcut(text, offset);
       if (shortcut) {
+        dismissCommandMenu(false);
         discardTyping(id);
         try {
           const change = shortcut.type === "divider"
@@ -567,21 +930,31 @@
     cacheCurrentHistory();
   }
 
-  function applyEditorChange(change: EditorChange, focus = true) {
+  function applyEditorChange(
+    change: EditorChange,
+    focus = true,
+  ): Promise<boolean> {
     pageChunk = change.after;
     cacheCurrentDocument();
     pushHistory(change);
-    persistEditorOperations(change.forward);
+    const persisted = persistEditorOperations(change.forward);
     if (focus) requestEditorFocus(change.afterSelection);
+    return persisted;
   }
 
-  function persistEditorOperations(operations: NoteOperation[]) {
+  function persistEditorOperations(
+    operations: NoteOperation[],
+  ): Promise<boolean> {
     error = "";
-    void saveQueue
+    return saveQueue
       .enqueue(operations)
-      .then(mergeCommittedResult)
+      .then((result) => {
+        mergeCommittedResult(result);
+        return true;
+      })
       .catch((cause) => {
         error = cause instanceof Error ? cause.message : String(cause);
+        return false;
       });
   }
 
@@ -659,7 +1032,8 @@
     const current = pageChunk;
     if (!current) return false;
     try {
-      const change = mergeParagraphBackward(current, id) ??
+      const change = removeBlockStyleBackward(current, id) ??
+        mergeParagraphBackward(current, id) ??
         removeDividerBackward(current, id);
       if (!change) return false;
       applyEditorChange(change);
@@ -824,6 +1198,27 @@
     if (current) pendingDocuments.set(current.rootId, current);
   }
 
+  function nestedPageChunk(
+    source: NotesPageChunk,
+    pageId: string,
+  ): NotesPageChunk {
+    const byId = new Map(source.blocks.map((block) => [block.id, block]));
+    const blocks: NoteBlockRecord[] = [];
+    const visited = new Set<string>();
+    const stack = [pageId];
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (visited.has(id)) continue;
+      const block = byId.get(id);
+      if (!block) continue;
+      visited.add(id);
+      blocks.push(block);
+      if (block.type === "page" && block.id !== pageId) continue;
+      stack.push(...block.content.toReversed());
+    }
+    return { rootId: pageId, blocks };
+  }
+
   function cacheCurrentHistory() {
     const pageId = pageChunk?.rootId;
     if (!pageId) return;
@@ -871,12 +1266,16 @@
 </svelte:head>
 
 <svelte:window
+  onpointerdown={handleWindowPointerDown}
+  onfocusin={handleWindowFocusIn}
   onresize={() => {
     if (pageTitleElement) resizePageTitle(pageTitleElement);
+    updateCommandMenuPosition();
   }}
 />
 
 {#snippet textEditor(block: NoteBlockRecord)}
+  {@const blockMenu = commandMenu?.blockId === block.id ? commandMenu : null}
   <ParagraphBlockEditor
     {block}
     disabled={!nativeHost}
@@ -889,6 +1288,14 @@
     onPaste={handleParagraphPaste}
     onIndent={handleIndent}
     onOutdent={handleOutdent}
+    commandMenuOpen={blockMenu?.mode === "slash"}
+    turnMenuOpen={blockMenu?.mode === "turn"}
+    commandMenuId={blockMenu ? commandMenuId(block.id) : undefined}
+    commandMenuActiveOptionId={blockMenu?.mode === "slash"
+      ? activeCommandOptionId()
+      : undefined}
+    onCommandKeydown={handleCommandMenuKeydown}
+    onTurnInto={openTurnIntoMenu}
     onUndo={undoEditorChange}
     onRedo={redoEditorChange}
   />
@@ -1108,7 +1515,11 @@
       </div>
     </aside>
 
-    <section class="page-surface" aria-label="Selected note page">
+    <section
+      class="page-surface"
+      aria-label="Selected note page"
+      onscroll={updateCommandMenuPosition}
+    >
       {#if loading}
         <div class="page-state">Preparing Notes…</div>
       {:else if error && !selectedPage}
@@ -1168,6 +1579,22 @@
       {/if}
     </section>
   </main>
+
+  {#if commandMenu}
+    <SlashCommandMenu
+      menuId={commandMenuId(commandMenu.blockId)}
+      commands={commandMenuOptions}
+      selectedIndex={commandMenu.selectedIndex}
+      left={commandMenu.left}
+      top={commandMenu.top}
+      mode={commandMenu.mode}
+      onHighlight={(index) => {
+        if (commandMenu) commandMenu = { ...commandMenu, selectedIndex: index };
+      }}
+      onSelect={(command) => void executeCommand(command)}
+      onDismiss={() => dismissCommandMenu(true)}
+    />
+  {/if}
 </div>
 
 <style>

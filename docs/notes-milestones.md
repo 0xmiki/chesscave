@@ -124,8 +124,8 @@ after the current exit gate passes in automated tests and a desktop build.
 | 1 · Notes destination and page tree | Complete · 2026-07-31 | Milestone 0 |
 | 2 · Reliable paragraph editor | Complete · 2026-07-31 | Milestone 1 |
 | 3 · Essential document vocabulary | Complete · 2026-07-31 | Milestone 2 |
-| 4 · Slash menu and block transformation | Ready to begin | Milestone 3 |
-| 5 · Organization, recovery, and portability | Gated | Core Notes v1 |
+| 4 · Slash menu and block transformation | Complete · 2026-07-31 | Milestone 3 |
+| 5 · Organization, recovery, and portability | Ready to begin | Core Notes v1 |
 | 6 · Chess-native notes | Gated | Core Notes v1 |
 
 ### Milestone 0 — Durable block foundation
@@ -397,6 +397,33 @@ without adding a permanent toolbar.
 At the end of Milestone 4, Notes is considered a usable core product: durable
 pages, nested navigation, paragraph editing, essential Markdown blocks, and a
 slash menu. Only then should scope expand.
+
+**Completion record · 2026-07-31**
+
+- Typing `/` into a block that began empty opens a compact command surface at
+  the active caret. Labels and deliberate plain-language aliases filter the
+  eleven implemented actions; unmatched queries show a quiet empty result.
+- Arrow keys, Home, End, Enter, and Escape work without moving focus away from
+  the editor. Pointer selection calls the same command executor and therefore
+  produces the same reversible transaction as keyboard selection.
+- Every text command reuses the stable-ID type transformation introduced for
+  Markdown shortcuts. Divider creates its editable continuation, while
+  `/page` transforms the active block itself into a nested page, creates its
+  first paragraph atomically, navigates locally first, and focuses the title.
+- A focusable Phosphor block handle exposes the same vocabulary as **Turn
+  into** for pointer and assistive-technology users. It appears only on hover
+  or focus, keeping the document free of permanent toolbar chrome.
+- The fixed menu follows its caret or transform handle during document scroll
+  and window resize, chooses an above/below placement within the viewport, and
+  closes on outside pointer or focus movement. Escape restores the initiating
+  editor or handle; dismissal keeps slash text ordinary until that expression
+  is removed.
+- Automated fixtures cover the exact command vocabulary, labels and aliases,
+  invalid slash boundaries, empty results, wrapped keyboard navigation,
+  dismissal focus targets, reduced motion, stable-ID page transformation, and
+  native restart of the transformed page. Svelte checks, 58 Bun tests, 19 Rust
+  tests, Rust formatting, strict Clippy, the static production build, and the
+  Tauri debug build pass.
 
 ### Milestone 5 — Organization, recovery, and portability
 

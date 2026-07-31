@@ -285,6 +285,73 @@ export function transformToDivider(
   };
 }
 
+export function transformTextBlockToPage(
+  chunk: NotesPageChunk,
+  blockId: string,
+  pageParagraph: NewNoteBlock,
+  titleRuns: RichTextRun[],
+  beforeOffset: number,
+): EditorChange {
+  const { page: parent, block } = textBlockContext(chunk, blockId);
+  if (parent.type !== "page") {
+    throw new Error("A nested page must be created directly inside a page.");
+  }
+  if (pageParagraph.type !== "paragraph") {
+    throw new Error("A new page must begin with a paragraph block.");
+  }
+  const normalizedTitle = normalizeRuns(titleRuns);
+  const properties = richTextProperties(
+    block.properties,
+    normalizedTitle.length ? normalizedTitle : [{ text: "Untitled" }],
+  );
+  const created = recordFromNewBlock(pageParagraph, block.id);
+  const pageBlock = {
+    ...block,
+    type: "page" as const,
+    properties,
+    content: [...block.content, created.id],
+  };
+  return {
+    label: "transform",
+    before: chunk,
+    after: replaceBlocks(chunk, [pageBlock], [created]),
+    forward: [
+      { kind: "changeType", id: block.id, type: "page" },
+      { kind: "updateProperties", id: block.id, properties },
+      { kind: "createBlock", block: pageParagraph },
+      {
+        kind: "insertChild",
+        parentId: block.id,
+        childId: pageParagraph.id,
+        index: block.content.length,
+      },
+    ],
+    inverse: [
+      {
+        kind: "removeChild",
+        parentId: block.id,
+        childId: pageParagraph.id,
+      },
+      { kind: "deleteBlock", id: pageParagraph.id },
+      {
+        kind: "changeType",
+        id: block.id,
+        type: block.type as TextNoteBlockType,
+      },
+      {
+        kind: "updateProperties",
+        id: block.id,
+        properties: block.properties,
+      },
+    ],
+    beforeSelection: {
+      blockId,
+      offset: clampOffset(beforeOffset, noteBlockText(block)),
+    },
+    afterSelection: { blockId: pageParagraph.id, offset: 0 },
+  };
+}
+
 export interface ParsedInlineMarkdown {
   changed: boolean;
   runs: RichTextRun[];
@@ -619,6 +686,22 @@ export function mergeParagraphBackward(
     beforeSelection: { blockId, offset: 0 },
     afterSelection: { blockId: previous.id, offset: previousText.length },
   };
+}
+
+export function removeBlockStyleBackward(
+  chunk: NotesPageChunk,
+  blockId: string,
+): EditorChange | null {
+  const block = requireTextBlock(chunk, blockId);
+  if (block.type === "paragraph") return null;
+  return transformTextBlock(
+    chunk,
+    blockId,
+    "paragraph",
+    block.properties.title,
+    0,
+    0,
+  );
 }
 
 export function removeDividerBackward(

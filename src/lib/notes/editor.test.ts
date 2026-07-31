@@ -8,12 +8,14 @@ import {
   noteBlockText,
   pastePlainText,
   parseInlineMarkdown,
+  removeBlockStyleBackward,
   removeDividerBackward,
   replaceParagraphText,
   resolveParagraphKey,
   splitParagraph,
   trailingParagraph,
   transformToDivider,
+  transformTextBlockToPage,
   outdentListItem,
 } from "./editor";
 import type {
@@ -21,6 +23,7 @@ import type {
   NoteBlockRecord,
   NotesPageChunk,
   SupportedNoteBlockType,
+  TextNoteBlockType,
 } from "./types";
 
 const pageId = "00000000-0000-4000-8000-000000000001";
@@ -173,6 +176,48 @@ describe("Notes paragraph editor model", () => {
       kind: "createBlock",
       block: { id: secondId },
     });
+  });
+
+  test("removes a block style before merging backward", () => {
+    const styledTypes: TextNoteBlockType[] = [
+      "heading_1",
+      "heading_2",
+      "heading_3",
+      "bulleted_list_item",
+      "numbered_list_item",
+      "to_do",
+      "quote",
+      "code",
+    ];
+
+    for (const type of styledTypes) {
+      const chunk = document("styled text");
+      chunk.blocks[1] = record(paragraphId, type, "styled text");
+      chunk.blocks[1].properties.title = [
+        { text: "styled", bold: true },
+        { text: " text", italic: true },
+      ];
+      chunk.blocks[1].properties.checked = type === "to_do";
+
+      const change = removeBlockStyleBackward(chunk, paragraphId);
+      const normalized = change?.after.blocks[1];
+      expect(normalized?.id).toBe(paragraphId);
+      expect(normalized?.type).toBe("paragraph");
+      expect(normalized?.properties.title).toEqual(
+        chunk.blocks[1].properties.title,
+      );
+      expect(change?.afterSelection).toEqual({
+        blockId: paragraphId,
+        offset: 0,
+      });
+      expect(change?.inverse[0]).toEqual({
+        kind: "changeType",
+        id: paragraphId,
+        type,
+      });
+    }
+
+    expect(removeBlockStyleBackward(document(), paragraphId)).toBeNull();
   });
 
   test("moves nested children before merging away their list item", () => {
@@ -363,6 +408,40 @@ describe("Notes paragraph editor model", () => {
     expect(removed?.after.blocks[0].content).toEqual([continuationId]);
     expect(removed?.after.blocks.some((block) => block.type === "divider"))
       .toBeFalse();
+  });
+
+  test("turns the active block into a stable nested page with a first paragraph", () => {
+    const pageParagraphId = "00000000-0000-4000-8000-000000000003";
+    const existingChildId = "00000000-0000-4000-8000-000000000004";
+    const source = document("/page");
+    source.blocks[1].properties.future = { preserved: true };
+    source.blocks[1].content = [existingChildId];
+    source.blocks.push(
+      record(existingChildId, "paragraph", "kept", [], paragraphId),
+    );
+    const change = transformTextBlockToPage(
+      source,
+      paragraphId,
+      newParagraph(pageParagraphId),
+      [],
+      5,
+    );
+    const nestedPage = change.after.blocks[1];
+    expect(nestedPage.id).toBe(paragraphId);
+    expect(nestedPage.type).toBe("page");
+    expect(noteBlockText(nestedPage)).toBe("Untitled");
+    expect(nestedPage.properties.future).toEqual({ preserved: true });
+    expect(nestedPage.content).toEqual([existingChildId, pageParagraphId]);
+    expect(change.after.blocks.at(-1)?.parentId).toBe(paragraphId);
+    expect(change.afterSelection).toEqual({
+      blockId: pageParagraphId,
+      offset: 0,
+    });
+    expect(change.inverse[2]).toEqual({
+      kind: "changeType",
+      id: paragraphId,
+      type: "paragraph",
+    });
   });
 
   test("parses the supported inline Markdown marks into rich-text runs", () => {

@@ -1475,6 +1475,48 @@ mod tests {
     }
 
     #[test]
+    fn reopens_a_text_block_transformed_into_a_nested_page() {
+        let database = TestDatabase::new("slash-page-transform");
+        {
+            let mut connection = database.open();
+            apply_operations(
+                &mut connection,
+                vec![
+                    create(ROOT, "page", "Opening notes"),
+                    create(PARAGRAPH, "paragraph", "/page"),
+                    insert(None, ROOT, 0),
+                    insert(Some(ROOT), PARAGRAPH, 0),
+                    NoteOperation::ChangeType {
+                        id: PARAGRAPH.to_string(),
+                        block_type: "page".to_string(),
+                        expected_revision: None,
+                    },
+                    NoteOperation::UpdateProperties {
+                        id: PARAGRAPH.to_string(),
+                        properties: properties("Untitled"),
+                        expected_revision: None,
+                    },
+                    create(SECOND_PARAGRAPH, "paragraph", ""),
+                    insert(Some(PARAGRAPH), SECOND_PARAGRAPH, 0),
+                ],
+            )
+            .expect("transform text block into a nested page");
+        }
+
+        let connection = database.open();
+        let sidebar = load_sidebar(&connection).expect("reopen page sidebar");
+        assert!(sidebar.pages.iter().any(|page| page.id == PARAGRAPH));
+        let parent = load_page_chunk(&connection, ROOT).expect("reopen parent page");
+        assert_eq!(parent.blocks[0].content, vec![PARAGRAPH]);
+        assert_eq!(parent.blocks[1].id, PARAGRAPH);
+        assert_eq!(parent.blocks[1].block_type, "page");
+        let nested = load_page_chunk(&connection, PARAGRAPH).expect("open nested page");
+        assert_eq!(nested.blocks[0].id, PARAGRAPH);
+        assert_eq!(nested.blocks[0].content, vec![SECOND_PARAGRAPH]);
+        assert_eq!(nested.blocks[1].parent_id.as_deref(), Some(PARAGRAPH));
+    }
+
+    #[test]
     fn changing_type_preserves_unknown_compatible_properties() {
         let database = TestDatabase::new("type-properties");
         {

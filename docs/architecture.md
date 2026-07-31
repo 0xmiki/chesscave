@@ -70,6 +70,11 @@ renderer, engine process, and coach UI.
   shortcuts change a block's type without changing its ID, rich-text runs
   remain structured through editor transactions, and list indentation is a
   persisted parent move rather than visual padding.
+- Notes slash commands and the accessible **Turn into** control resolve through
+  one command registry and the same reversible editor operations. The command
+  surface owns no document data; it tracks the active caret or block handle,
+  while `/page` promotes the current stable block to a nested page and adds its
+  initial paragraph atomically.
 - `CoachState` owns one app-server child and one ephemeral thread.
 - App-server JSONL is forwarded to Svelte as `chesscave://coach-event`; the
   sidebar maps item lifecycle events to visible thinking, MCP call, wait, and

@@ -48,6 +48,10 @@ real-time update infrastructure.
 12. Schema 2 expands the accepted application vocabulary without replacing the
     schema 1 JSON-backed storage shape. Rich-text marks and unknown compatible
     properties remain opaque JSON at the persistence boundary.
+13. Markdown shortcuts, slash commands, and the accessible transform menu are
+    alternate inputs to the same reversible operation builders. Creating a
+    page from a text block keeps the block ID, changes its type, and attaches
+    its initial paragraph in one transaction.
 
 ## Why SQLite
 

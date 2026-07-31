@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import IconDotsSixVerticalRegular from "phosphor-icons-svelte/IconDotsSixVerticalRegular.svelte";
   import {
     noteBlockText,
     resolveParagraphKey,
@@ -19,6 +20,12 @@
     onPaste,
     onIndent,
     onOutdent,
+    commandMenuOpen = false,
+    turnMenuOpen = false,
+    commandMenuId,
+    commandMenuActiveOptionId,
+    onCommandKeydown,
+    onTurnInto,
     onUndo,
     onRedo,
   }: {
@@ -34,6 +41,12 @@
     ) => void;
     onIndent: (id: string, offset: number) => boolean;
     onOutdent: (id: string, offset: number) => boolean;
+    commandMenuOpen?: boolean;
+    turnMenuOpen?: boolean;
+    commandMenuId?: string;
+    commandMenuActiveOptionId?: string;
+    onCommandKeydown: (id: string, key: string) => boolean;
+    onTurnInto: (id: string, trigger: HTMLButtonElement) => void;
     onCommit: (id: string, offset: number) => void;
     onSplit: (id: string, start: number, end: number) => void;
     onMergeBackward: (id: string) => boolean;
@@ -158,6 +171,14 @@
 
   function handleKeydown(event: KeyboardEvent) {
     if (disabled) return;
+    if (
+      !composing &&
+      !event.isComposing &&
+      onCommandKeydown(block.id, event.key)
+    ) {
+      event.preventDefault();
+      return;
+    }
     const offsets = selectionOffsets();
     const action = resolveParagraphKey({
       key: event.key,
@@ -270,6 +291,18 @@
 </script>
 
 <div class="paragraph-shell">
+  <button
+    class="turn-into"
+    data-turn-into-trigger={block.id}
+    data-block-type={block.type}
+    type="button"
+    aria-label={`Turn ${blockLabel(block.type)} into another block type`}
+    aria-haspopup="menu"
+    aria-expanded={turnMenuOpen}
+    aria-controls={turnMenuOpen ? commandMenuId : undefined}
+    disabled={disabled}
+    onclick={(event) => onTurnInto(block.id, event.currentTarget)}
+  ><IconDotsSixVerticalRegular /></button>
   <svelte:element
     this={editorTag(block.type)}
     class="paragraph-editor"
@@ -277,12 +310,18 @@
     bind:this={editor}
     contenteditable="true"
     data-note-paragraph-editor
+    data-block-id={block.id}
     data-block-type={block.type}
     role="textbox"
     tabindex={disabled ? -1 : 0}
     aria-disabled={disabled}
     aria-label={blockLabel(block.type)}
     aria-multiline="true"
+    aria-haspopup={commandMenuOpen ? "menu" : undefined}
+    aria-controls={commandMenuOpen ? commandMenuId : undefined}
+    aria-activedescendant={commandMenuOpen
+      ? commandMenuActiveOptionId
+      : undefined}
     data-placeholder="Write something…"
     onbeforeinput={(event) => {
       const rejected =
@@ -333,6 +372,70 @@
   .paragraph-shell {
     position: relative;
     min-height: 34px;
+  }
+
+  .turn-into {
+    position: absolute;
+    z-index: 2;
+    top: 6px;
+    left: -30px;
+    display: grid;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    color: var(--muted);
+    background: transparent;
+    opacity: 0;
+    cursor: pointer;
+    pointer-events: none;
+  }
+
+  .paragraph-shell:hover .turn-into,
+  .paragraph-shell:focus-within .turn-into,
+  .turn-into[aria-expanded="true"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .turn-into:hover,
+  .turn-into:focus-visible {
+    outline: 0;
+    color: var(--coral-dark);
+    background: var(--coral-soft);
+  }
+
+  .turn-into:disabled {
+    display: none;
+  }
+
+  .turn-into :global(svg) {
+    width: 16px;
+    height: 16px;
+  }
+
+  .turn-into[data-block-type="heading_1"] {
+    top: 18px;
+  }
+
+  .turn-into[data-block-type="heading_2"] {
+    top: 12px;
+  }
+
+  .turn-into[data-block-type="heading_3"] {
+    top: 8px;
+  }
+
+  .turn-into[data-block-type="bulleted_list_item"],
+  .turn-into[data-block-type="numbered_list_item"],
+  .turn-into[data-block-type="to_do"] {
+    left: -57px;
+  }
+
+  .turn-into[data-block-type="quote"] {
+    top: 11px;
   }
 
   .paragraph-editor {
