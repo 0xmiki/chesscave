@@ -5,6 +5,7 @@
   import ChessBoard from "$lib/components/ChessBoard.svelte";
   import CoachSidebar from "$lib/components/CoachSidebar.svelte";
   import EvaluationBar from "$lib/components/EvaluationBar.svelte";
+  import GameSummary from "$lib/components/GameSummary.svelte";
   import MoveList from "$lib/components/MoveList.svelte";
   import MoveBadge from "$lib/components/MoveBadge.svelte";
   import PlayerStrip from "$lib/components/PlayerStrip.svelte";
@@ -19,6 +20,7 @@
     variationPositionLabel,
   } from "$lib/chess/game";
   import { bestAlternativeArrow } from "$lib/chess/arrows";
+  import { buildReviewPresentation } from "$lib/chess/review";
   import {
     deepestOpeningPly,
     loadOpeningBook,
@@ -104,11 +106,6 @@
       ? variationAnalyses[snapshot.fen] ?? null
       : review?.positions[currentPly] ?? null,
   );
-  const moveReview = $derived(
-    !exploring && currentPly > 0
-      ? review?.moves[currentPly - 1] ?? null
-      : null,
-  );
   const principal = $derived(positionReview?.lines[0] ?? null);
   const currentLabel = $derived(
     exploring
@@ -139,6 +136,15 @@
   );
   const mainlineBookThrough = $derived(
     deepestOpeningPly(openingBook, game.snapshots),
+  );
+  const reviewPresentation = $derived(
+    review ? buildReviewPresentation(game, review, mainlineBookThrough) : null,
+  );
+  const reviewMoves = $derived(reviewPresentation?.moves ?? review?.moves ?? []);
+  const moveReview = $derived(
+    !exploring && currentPly > 0
+      ? reviewMoves[currentPly - 1] ?? null
+      : null,
   );
   const variationBookThrough = $derived(
     variation
@@ -822,6 +828,23 @@
 
   <main>
     <section class="workspace">
+      <div class="summary-column">
+        <GameSummary
+          presentation={reviewPresentation}
+          whiteName={whitePlayer.name}
+          blackName={blackPlayer.name}
+          whiteRating={whitePlayer.rating}
+          blackRating={blackPlayer.rating}
+          {currentPly}
+          busy={reviewBusy}
+          progress={reviewBusy
+            ? `${reviewProgress?.completed ?? 0}/${reviewProgress?.total ?? game.snapshots.length}`
+            : ""}
+          error={reviewError || (!engine.available ? engine.message : "")}
+          onSelect={selectPly}
+        />
+      </div>
+
       <div class="study-column">
         <div class="board-stage">
           <div class="player-slot top-player">
@@ -913,7 +936,7 @@
           <span class="timeline-label">Game</span>
           <MoveList
             moves={game.moves}
-            reviews={review?.moves ?? []}
+            reviews={reviewMoves}
             {variation}
             {variationPly}
             bookThroughPly={mainlineBookThrough}
@@ -1167,7 +1190,10 @@
 
   .workspace {
     display: grid;
-    grid-template-columns: minmax(560px, 1fr) minmax(370px, 420px);
+    grid-template-columns:
+      clamp(230px, 18vw, 270px)
+      minmax(520px, 1fr)
+      minmax(370px, 420px);
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -1175,7 +1201,7 @@
   }
 
   .study-column {
-    --board-size: min(660px, calc(100vh - 270px), calc(100vw - 540px));
+    --board-size: min(660px, calc(100vh - 270px), calc(100vw - 810px));
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1185,6 +1211,12 @@
     padding: 16px 24px 18px;
     scrollbar-color: var(--line-strong) transparent;
     background: var(--paper);
+  }
+
+  .summary-column {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .board-stage {
@@ -1844,17 +1876,17 @@
 
   @media (max-width: 1180px) {
     .workspace {
-      grid-template-columns: minmax(500px, 1fr) 370px;
+      grid-template-columns: 220px minmax(440px, 1fr) 340px;
     }
 
     .study-column {
-      --board-size: min(620px, calc(100vh - 270px), calc(100vw - 475px));
+      --board-size: min(620px, calc(100vh - 270px), calc(100vw - 680px));
       padding-inline: 14px;
     }
 
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1100px) {
     .app-shell {
       grid-template-rows: 68px minmax(0, 1fr);
     }
@@ -1871,11 +1903,18 @@
 
     .study-column {
       --board-size: min(640px, calc(100vw - 90px), calc(100vh - 235px));
+      order: 1;
       min-height: calc(100vh - 68px);
       overflow: visible;
     }
 
+    .summary-column {
+      order: 2;
+      overflow: visible;
+    }
+
     .study-panel {
+      order: 3;
       min-height: 680px;
       border-top: 1px solid var(--line);
       border-left: 0;

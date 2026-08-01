@@ -96,6 +96,8 @@ export interface ReviewSummary {
   whiteAccuracy: number;
   blackAccuracy: number;
   classifications: Partial<Record<MoveClassification, number>>;
+  whiteClassifications: Partial<Record<MoveClassification, number>>;
+  blackClassifications: Partial<Record<MoveClassification, number>>;
 }
 
 export interface GameReview {

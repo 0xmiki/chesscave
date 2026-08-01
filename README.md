@@ -14,6 +14,9 @@ The first milestone includes:
 - one-pass, whole-game Stockfish reviews persisted to the desktop data folder;
 - instant per-ply evaluation, WDL, expected-points classification, and MultiPV
   playback after the review completes;
+- a game-at-a-glance rail with an interactive winning-chances graph, per-player
+  move classifications, whole-game accuracy, and opening/middlegame/endgame
+  accuracy;
 - a local read-only MCP server for engine analysis, whole-game review, and
   clock-addressable PNG board images;
 - a streamed Codex app-server sidebar with live thinking, MCP, waiting, and
@@ -67,6 +70,35 @@ The opening index is generated from the CC0
 dataset pinned under `data/openings/`. It is bundled with the app and never
 requires an opening API. See [data/openings/README.md](data/openings/README.md)
 for the pinned revision and regeneration command.
+
+## Review-metric attribution
+
+ChessCave's winning-chance curve, move-accuracy curve, volatility-weighted and
+harmonic game-accuracy aggregation, serious-error thresholds, and board-state
+phase division are derived from Lichess's published analysis model:
+
+- [Lichess Accuracy metric](https://lichess.org/page/accuracy)
+- [`AccuracyPercent.scala`](https://github.com/lichess-org/lila/blob/master/modules/analyse/src/main/AccuracyPercent.scala)
+- [`Advice.scala`](https://github.com/lichess-org/lila/blob/master/modules/tree/src/main/Advice.scala)
+- [`Divider.scala`](https://github.com/lichess-org/scalachess/blob/master/core/src/main/scala/Divider.scala)
+- [winning-chance calibration discussion](https://github.com/lichess-org/lila/pull/11148)
+
+Lichess and its analysis sources are licensed under the GNU Affero General
+Public License 3.0 or later. ChessCave adds its own restrained positive move
+labels, opening-book overlay, and missed-opportunity detection.
+
+Brilliant-move research and implementation references:
+
+- [Chess.com's published Brilliant and Great Move conditions](https://support.chess.com/en/articles/8572705-how-are-moves-classified-what-is-a-blunder-or-brilliant-etc)
+- [Zaidi and Guerzhoy, “Predicting User Perception of Move Brilliance in Chess”](https://arxiv.org/abs/2406.11895)
+- [`kamronzaidi/brilliant-moves-clf`](https://github.com/kamronzaidi/brilliant-moves-clf), the accompanying GPL-3.0 research implementation
+- [`dev-arcturus/positional_chess`](https://github.com/dev-arcturus/positional_chess), consulted for its documented SEE and compensation-aware heuristic design; its source is not copied into ChessCave
+
+ChessCave's implementation is original Rust code. It combines legal static
+exchange evaluation, a short principal-variation material trough, the player's
+published PGN rating when present, and Stockfish's already-available
+iterative-deepening output. The last signal rewards moves that shallow search
+underestimates without launching a second engine search.
 
 ## Verification
 

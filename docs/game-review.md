@@ -5,7 +5,7 @@ Importing or branching a game creates one immutable sequence of positions. The
 desktop host analyzes that sequence once and saves the complete result under:
 
 ```text
-app-local-data/reviews/v2/<sha256>.json
+app-local-data/reviews/v4/<sha256>.json
 ```
 
 The key covers the ordered FEN/played-move sequence, schema version, Stockfish
@@ -46,7 +46,9 @@ GameReview
 └─ summary
    ├─ whiteAccuracy
    ├─ blackAccuracy
-   └─ classifications
+   ├─ classifications
+   ├─ whiteClassifications
+   └─ blackClassifications
 ```
 
 All engine evaluations and WDL triples are normalized to White's perspective.
@@ -74,35 +76,67 @@ Fixed nodes mirror Chess.com's published reason for its faster whole-game
 review architecture: comparable work for every ply instead of an unstable
 depth or time budget.
 
-## Classifications
+## Accuracy and classifications
 
-ChessCave uses Stockfish WDL as its local expected-points model. It then applies
-Chess.com's published Classification V2 expected-points-loss boundaries:
+ChessCave v4 maps Stockfish centipawn evaluations onto Lichess's published
+winning-chance curve, then maps the winning-chance loss of each move onto
+Lichess move accuracy. Whole-game accuracy is the mean of a
+volatility-weighted mean and a harmonic mean, using the same bounded sliding
+window weights as Lichess. This makes the displayed score reproducible and
+keeps errors in already-decided positions from dominating the review.
 
-| Classification | Expected points lost |
+Lichess's normalized winning-chance-loss thresholds correspond to 5, 10, and
+15 points on the public 0–100 Win% scale:
+
+| Classification | Win% lost |
 | --- | ---: |
-| Best | engine choice |
-| Excellent | 0.00–0.02 |
-| Good | 0.02–0.05 |
-| Inaccuracy | 0.05–0.10 |
-| Mistake | 0.10–0.20 |
-| Blunder | 0.20–1.00 |
+| Inaccuracy | 5–10 |
+| Mistake | 10–15 |
+| Blunder | 15+ |
 
-A best move becomes `great` when the second candidate loses at least 0.10
-expected points and the player was not already overwhelmingly winning. Book
-moves are identified independently from the engine review by the bundled
-Lichess opening-position index. ChessCave marks the line through the deepest
-named position as book theory, while leaving the underlying Stockfish
-classification untouched. Miss and Brilliant still need tactical-opportunity
-and sound-sacrifice detection respectively; the model deliberately does not
-invent those labels yet.
+ChessCave supplies the positive vocabulary needed by its study interface. An
+exact Stockfish choice is `best`; a non-best move losing at most one Win% point
+is `excellent`, and one losing fewer than five is `good`. A best move becomes
+`great` when the second candidate loses at least ten Win% points and the player
+was not already overwhelmingly winning.
 
-Chess.com's rating-conditioned Expected Points curve and CAPS2 accuracy
-transformation are not public. `estimatedAccuracy` is consequently named as an
-estimate and is never presented as Chess.com's proprietary Accuracy score.
+`brilliant` requires a sound non-pawn sacrifice, practical equality or better
+after the move, and a position that was not already overwhelmingly won. The
+sacrifice detector has two complementary signals. A legal static-exchange
+search recognizes newly offered pieces even when the best defense declines the
+offer; a four-ply walk through Stockfish's best continuation records temporary
+material concessions and therefore catches delayed combinations. Measuring the
+material change from the pre-move position prevents ordinary equal exchanges
+from being called sacrifices.
 
-Published behavior used as design input:
+ChessCave retains Stockfish's MultiPV snapshot at depth 10 while the normal
+fixed-node review continues. When shallow search omits, demotes, or materially
+undervalues the eventual deep choice, the move receives a small near-best
+tolerance increase. This approximates the paper's human-surprise result without
+running another engine. When a valid PGN rating is available, sub-1600 players
+receive modestly wider near-best tolerances and sub-1000 players may receive
+credit for a one-pawn net piece concession; 2200+ players receive a tighter
+tolerance. No Elo-like single-game estimate is generated or displayed.
 
-- <https://support.chess.com/en/articles/8584089-how-does-game-review-work>
+`miss` requires either losing a forced mate or surrendering a winning
+opportunity just created by the opponent. Book moves are overlaid from the
+bundled opening-position index in the webview so engine analysis remains
+independent from opening taxonomy.
+
+The phase divider is based on Lichess's public `scalachess` implementation. It
+detects the middlegame from remaining major/minor pieces, sparse home ranks, or
+color mixing on the board, and detects the endgame once six or fewer
+major/minor pieces remain. Phase accuracy reuses the same move and game
+accuracy machinery.
+
+Published model and source attribution:
+
+- <https://lichess.org/page/accuracy>
+- <https://github.com/lichess-org/lila/blob/master/modules/analyse/src/main/AccuracyPercent.scala>
+- <https://github.com/lichess-org/lila/blob/master/modules/tree/src/main/Advice.scala>
+- <https://github.com/lichess-org/scalachess/blob/master/core/src/main/scala/Divider.scala>
+- <https://github.com/lichess-org/lila/pull/11148>
 - <https://support.chess.com/en/articles/8572705-how-are-moves-classified-what-is-a-blunder-or-brilliant-etc>
-- <https://www.chess.com/news/view/stockfish-16-on-chesscom>
+- <https://arxiv.org/abs/2406.11895>
+- <https://github.com/kamronzaidi/brilliant-moves-clf>
+- <https://github.com/dev-arcturus/positional_chess>

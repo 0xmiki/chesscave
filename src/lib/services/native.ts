@@ -38,6 +38,10 @@ export async function reviewGame(
   nodes = 60_000,
   multiPv = 3,
 ): Promise<GameReview> {
+  const ratings = {
+    w: parsePgnRating(game.headers.WhiteElo),
+    b: parsePgnRating(game.headers.BlackElo),
+  };
   return invoke<GameReview>("review_game", {
     positions: game.snapshots.map((snapshot) => ({
       ply: snapshot.ply,
@@ -50,11 +54,18 @@ export async function reviewGame(
       san: move.san,
       uci: `${move.from}${move.to}${move.promotion ?? ""}`,
       color: move.color,
+      rating: ratings[move.color],
     })),
     nodes,
     multiPv,
     force,
   });
+}
+
+function parsePgnRating(value: string | undefined): number | null {
+  if (!value || value === "?") return null;
+  const rating = Number.parseInt(value, 10);
+  return Number.isFinite(rating) && rating >= 100 && rating <= 4000 ? rating : null;
 }
 
 export function onReviewProgress(
