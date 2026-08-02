@@ -1,14 +1,14 @@
 <script lang="ts">
-  import bestIcon from "$lib/assets/review-badges/best.svg";
-  import blunderIcon from "$lib/assets/review-badges/blunder.svg";
-  import bookIcon from "$lib/assets/review-badges/book.svg";
-  import brilliantIcon from "$lib/assets/review-badges/brilliant.svg";
-  import excellentIcon from "$lib/assets/review-badges/excellent.svg";
-  import goodIcon from "$lib/assets/review-badges/good.svg";
-  import greatIcon from "$lib/assets/review-badges/great.svg";
-  import inaccuracyIcon from "$lib/assets/review-badges/inaccuracy.svg";
-  import missIcon from "$lib/assets/review-badges/miss.svg";
-  import mistakeIcon from "$lib/assets/review-badges/mistake.svg";
+  import bestIcon from "$lib/assets/review-badges/best.png";
+  import blunderIcon from "$lib/assets/review-badges/blunder.png";
+  import bookIcon from "$lib/assets/review-badges/book.png";
+  import brilliantIcon from "$lib/assets/review-badges/brilliant.png";
+  import excellentIcon from "$lib/assets/review-badges/excellent.png";
+  import goodIcon from "$lib/assets/review-badges/good.png";
+  import greatIcon from "$lib/assets/review-badges/great.png";
+  import inaccuracyIcon from "$lib/assets/review-badges/inaccuracy.png";
+  import missIcon from "$lib/assets/review-badges/miss.png";
+  import mistakeIcon from "$lib/assets/review-badges/mistake.png";
   import type { MoveClassification } from "$lib/chess/types";
 
   let {
