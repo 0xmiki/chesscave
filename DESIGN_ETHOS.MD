@@ -65,7 +65,7 @@ inevitable: type carries the right voice, spacing reveals structure, color
 clarifies hierarchy, and form gives the hand or eye an obvious path.
 
 ChessCave’s aesthetic is warm, editorial, and luminous. Fraunces gives private
-sentences presence; DM Sans makes controls legible; pearl surfaces and the ChessCave
+sentences presence; Inter makes controls and dense data legible; pearl surfaces and the ChessCave
 mark provide warmth without noise. These choices must serve the experience.
 Beauty should be felt as composure, not announced through excess.
 

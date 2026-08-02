@@ -1,3 +1,4 @@
+mod chess_com;
 mod codex;
 mod engine;
 mod notes;
@@ -11,6 +12,7 @@ pub fn run() {
             engine::engine_status,
             engine::analyze_position,
             engine::review_game,
+            chess_com::chess_com_dashboard,
             notes::notes_bootstrap,
             notes::notes_load_sidebar,
             notes::notes_load_page,

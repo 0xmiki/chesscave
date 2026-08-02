@@ -8,7 +8,7 @@
     subtitle = "",
     actions,
   }: {
-    active: "study" | "notes";
+    active: "home" | "study" | "notes";
     title: string;
     subtitle?: string;
     actions?: Snippet;
@@ -16,7 +16,7 @@
 </script>
 
 <header class="topbar">
-  <a class="brand" href="/" aria-label="ChessCave study">
+  <a class="brand" href="/" aria-label="ChessCave home">
     <span class="brand-mark" aria-hidden="true">
       <IconHorseRegular />
     </span>
@@ -24,7 +24,8 @@
   </a>
 
   <nav aria-label="Primary navigation">
-    <a class:active={active === "study"} href="/">Study</a>
+    <a class:active={active === "home"} href="/">Home</a>
+    <a class:active={active === "study"} href="/study">Study</a>
     <a class:active={active === "notes"} href="/notes">Notes</a>
   </nav>
 

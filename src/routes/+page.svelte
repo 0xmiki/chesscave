@@ -1,1293 +1,539 @@
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { onMount } from "svelte";
-  import { Chess, type Square } from "chess.js";
   import AppHeader from "$lib/components/AppHeader.svelte";
-  import ChessBoard from "$lib/components/ChessBoard.svelte";
-  import CoachSidebar from "$lib/components/CoachSidebar.svelte";
-  import EvaluationBar from "$lib/components/EvaluationBar.svelte";
-  import GameSummary from "$lib/components/GameSummary.svelte";
-  import MoveList from "$lib/components/MoveList.svelte";
-  import MoveBadge from "$lib/components/MoveBadge.svelte";
-  import PlayerStrip from "$lib/components/PlayerStrip.svelte";
+  import RatingSparkline from "$lib/components/RatingSparkline.svelte";
+  import { parsePgn } from "$lib/chess/game";
   import {
-    createVariation,
-    extendVariation,
-    parsePgn,
-    positionLabel,
-    SAMPLE_PGN,
-    sideToMove,
-    uciLineToSan,
-    variationPositionLabel,
-  } from "$lib/chess/game";
-  import { bestAlternativeArrow } from "$lib/chess/arrows";
-  import { buildReviewPresentation } from "$lib/chess/review";
+    CHESSCOM_DASHBOARD_STORAGE_KEY,
+    CHESSCOM_USERNAME_STORAGE_KEY,
+    STUDY_STORAGE_KEY,
+    formatChessComTimeControl,
+    gamesForTimeClass,
+    normalizeChessComUsername,
+    ratingHistory,
+    ratingStatsFor,
+    recentRatingChange,
+    reviewedGameUrls,
+    summarizeChessComGame,
+    type ChessComDashboard,
+    type ChessComGame,
+    type ChessComTimeClass,
+  } from "$lib/chess/chesscom";
   import {
-    deepestOpeningPly,
-    loadOpeningBook,
-    openingAt,
-    type OpeningBook,
-  } from "$lib/chess/openings";
-  import type {
-    AnalysisResult,
-    CoachActivity,
-    CoachMessage,
-    EngineStatus,
-    GameReview,
-    MoveClassification,
-    ReviewProgress,
-    Side,
-    VariationLine,
-  } from "$lib/chess/types";
-  import {
-    analyzePosition,
-    getEngineStatus,
+    getChessComDashboard,
     hasNativeHost,
-    newCoachThread,
-    onCoachEvent,
-    onReviewProgress,
-    reviewGame,
-    sendCoachMessage,
-    startCoach,
   } from "$lib/services/native";
 
-  let game = $state(parsePgn(SAMPLE_PGN));
-  let currentPly = $state(16);
-  let variation = $state<VariationLine | null>(null);
-  let variationPly = $state<number | null>(null);
-  let variationAnalyses = $state<Record<string, AnalysisResult>>({});
-  let variationPending = $state<Record<string, true>>({});
-  let variationError = $state("");
-  let flipped = $state(false);
-  let selected = $state<string | null>(null);
-  let review = $state<GameReview | null>(null);
-  let reviewBusy = $state(false);
-  let reviewQueued = $state(false);
-  let forceQueuedReview = $state(false);
-  let reviewError = $state("");
-  let reviewProgress = $state<ReviewProgress | null>(null);
-  let engine = $state<EngineStatus>({
-    available: false,
-    name: null,
-    path: null,
-    message: "Checking Stockfish…",
+  const timeClasses: { id: ChessComTimeClass; label: string }[] = [
+    { id: "rapid", label: "Rapid" },
+    { id: "blitz", label: "Blitz" },
+  ];
+  const gameDateFormatter = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
-  let coachStatus = $state<"offline" | "starting" | "ready" | "thinking" | "error">(
-    hasNativeHost() ? "starting" : "offline",
-  );
-  let coachDetail = $state(
-    hasNativeHost() ? "Starting Codex app-server…" : "Desktop preview required",
-  );
-  let coachMessages = $state<CoachMessage[]>([]);
-  let coachActivity = $state<CoachActivity | null>(null);
-  let activeCoachTools = $state<Record<string, string>>({});
-  let importOpen = $state(false);
-  let pgnDraft = $state("");
-  let importError = $state("");
-  let studyTab = $state<"review" | "coach">("review");
-  let storageReady = $state(false);
-  let openingBook = $state<OpeningBook | null>(null);
-  let openingError = $state("");
-
-  const exploring = $derived(variation !== null && variationPly !== null);
-  const snapshot = $derived(
-    exploring
-      ? variation!.snapshots[variationPly!]
-      : game.snapshots[currentPly],
-  );
-  const boardPosition = $derived(new Chess(snapshot.fen));
-  const legalTargets = $derived.by(() => {
-    if (!selected) return [];
-    return boardPosition
-      .moves({ square: selected as Square, verbose: true })
-      .map((move) => move.to);
-  });
-  const positionReview = $derived(
-    exploring
-      ? variationAnalyses[snapshot.fen] ?? null
-      : review?.positions[currentPly] ?? null,
-  );
-  const principal = $derived(positionReview?.lines[0] ?? null);
-  const currentLabel = $derived(
-    exploring
-      ? variationPositionLabel(variation!, variationPly!)
-      : positionLabel(game, currentPly),
-  );
-  const navigationLabel = $derived(
-    exploring
-      ? `Variation ${variationPly} / ${variation?.moves.length ?? 0}`
-      : `${currentPly} / ${game.moves.length}`,
-  );
-  const canGoBack = $derived(exploring || currentPly > 0);
-  const canGoForward = $derived(
-    exploring
-      ? variationPly! < (variation?.moves.length ?? 0)
-      : currentPly < game.moves.length,
-  );
-  const variationPositionBusy = $derived(
-    exploring && Boolean(variationPending[snapshot.fen]),
-  );
-  const variationSnapshots = $derived.by(() =>
-    variation
-      ? [
-          ...game.snapshots.slice(0, variation.rootPly + 1),
-          ...variation.snapshots.slice(1),
-        ]
-      : game.snapshots,
-  );
-  const mainlineBookThrough = $derived(
-    deepestOpeningPly(openingBook, game.snapshots),
-  );
-  const reviewPresentation = $derived(
-    review ? buildReviewPresentation(game, review, mainlineBookThrough) : null,
-  );
-  const reviewMoves = $derived(reviewPresentation?.moves ?? review?.moves ?? []);
-  const moveReview = $derived(
-    !exploring && currentPly > 0
-      ? reviewMoves[currentPly - 1] ?? null
-      : null,
-  );
-  const variationBookThrough = $derived(
-    variation
-      ? Math.max(
-          0,
-          deepestOpeningPly(openingBook, variationSnapshots) -
-            variation.rootPly,
-        )
-      : 0,
-  );
-  const currentOpening = $derived(
-    openingAt(
-      openingBook,
-      exploring ? variationSnapshots : game.snapshots,
-      exploring ? variation!.rootPly + variationPly! : currentPly,
-    ),
-  );
-  const currentMoveClassification = $derived.by(
-    (): MoveClassification | null => {
-      if (exploring) {
-        return variationPly! <= variationBookThrough ? "book" : null;
-      }
-      if (currentPly > 0 && currentPly <= mainlineBookThrough) return "book";
-      return moveReview?.classification ?? null;
-    },
-  );
-  const bestMoveArrow = $derived.by(() => {
-    if (exploring || currentPly <= 0 || !moveReview) return null;
-    return bestAlternativeArrow(
-      moveReview.uci,
-      moveReview.bestMove,
-      currentPly <= mainlineBookThrough,
-    );
-  });
-  const bestAlternativeSan = $derived.by(() => {
-    if (!bestMoveArrow || currentPly <= 0) return null;
-    return (
-      uciLineToSan(game.snapshots[currentPly - 1].fen, [
-        moveReview!.bestMove!,
-      ])[0] ?? moveReview!.bestMove
-    );
-  });
-  const eventTitle = $derived(game.headers.Event || "Untitled game");
-  const matchupTitle = $derived(
-    `${game.headers.White || "White"} vs ${game.headers.Black || "Black"}`,
-  );
-  const whitePlayer = $derived({
-    side: "w" as Side,
-    name: game.headers.White || "White player",
-    rating:
-      game.headers.WhiteElo && game.headers.WhiteElo !== "?"
-        ? game.headers.WhiteElo
-        : null,
-  });
-  const blackPlayer = $derived({
-    side: "b" as Side,
-    name: game.headers.Black || "Black player",
-    rating:
-      game.headers.BlackElo && game.headers.BlackElo !== "?"
-        ? game.headers.BlackElo
-        : null,
-  });
-  const topPlayer = $derived(flipped ? whitePlayer : blackPlayer);
-  const bottomPlayer = $derived(flipped ? blackPlayer : whitePlayer);
-  const activeSide = $derived<Side>(
-    snapshot.fen.split(/\s+/)[1] === "b" ? "b" : "w",
-  );
-
-  $effect(() => {
-    if (!storageReady || typeof localStorage === "undefined") return;
-    localStorage.setItem(
-      "chesscave.study.v1",
-      JSON.stringify({ pgn: game.pgn, currentPly }),
-    );
+  const syncDateFormatter = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   });
 
-  $effect(() => {
-    if (!storageReady || typeof localStorage === "undefined") return;
-    localStorage.setItem(
-      "chesscave.coach-messages.v1",
-      JSON.stringify(coachMessages.slice(-40)),
-    );
-  });
+  let hydrated = $state(false);
+  let username = $state("");
+  let usernameInput = $state("");
+  let dashboard = $state<ChessComDashboard | null>(null);
+  let syncing = $state(false);
+  let syncError = $state("");
+  let editingProfile = $state(false);
+  let activeTimeClass = $state<ChessComTimeClass>("rapid");
+  let openingGameUrl = $state("");
+  let reviewedUrls = $state<Set<string>>(new Set());
+
+  const profileTitle = $derived(
+    dashboard?.profile.name || dashboard?.profile.username || "Your Chess.com games",
+  );
+  const rapidGames = $derived(gamesForTimeClass(dashboard, "rapid"));
+  const blitzGames = $derived(gamesForTimeClass(dashboard, "blitz"));
+  const activeGames = $derived(
+    activeTimeClass === "rapid" ? rapidGames : blitzGames,
+  );
 
   onMount(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    let unlistenReview: (() => void) | undefined;
+    hydrated = true;
+    reviewedUrls = reviewedGameUrls();
+    const savedUsername = localStorage.getItem(CHESSCOM_USERNAME_STORAGE_KEY) ?? "";
+    username = savedUsername;
+    usernameInput = savedUsername;
 
-    void (async () => {
-      try {
-        const savedStudy = localStorage.getItem("chesscave.study.v1");
-        if (savedStudy) {
-          const saved = JSON.parse(savedStudy) as { pgn?: string; currentPly?: number };
-          if (saved.pgn) {
-            const restored = parsePgn(saved.pgn);
-            game = restored;
-            currentPly = Math.max(
-              0,
-              Math.min(restored.moves.length, saved.currentPly ?? restored.moves.length),
-            );
-          }
-        }
-
-        const savedMessages = localStorage.getItem("chesscave.coach-messages.v1");
-        if (savedMessages) {
-          const restored = JSON.parse(savedMessages) as CoachMessage[];
-          coachMessages = restored.map((message) => ({ ...message, pending: false }));
-        }
-      } catch {
-        localStorage.removeItem("chesscave.study.v1");
-        localStorage.removeItem("chesscave.coach-messages.v1");
+    try {
+      const cached = JSON.parse(
+        localStorage.getItem(CHESSCOM_DASHBOARD_STORAGE_KEY) ?? "null",
+      ) as { username?: string; dashboard?: ChessComDashboard } | null;
+      if (cached?.username === savedUsername && cached.dashboard) {
+        dashboard = cached.dashboard;
       }
-      storageReady = true;
+    } catch {
+      localStorage.removeItem(CHESSCOM_DASHBOARD_STORAGE_KEY);
+    }
 
-      void loadOpeningBook()
-        .then((book) => {
-          if (!disposed) openingBook = book;
-        })
-        .catch((error) => {
-          if (!disposed) openingError = String(error);
-        });
-
-      if (hasNativeHost()) {
-        unlistenReview = await onReviewProgress((progress) => {
-          reviewProgress = progress;
-        });
-      }
-
-      engine = await getEngineStatus();
-      if (engine.available) void requestGameReview();
-
-      if (!hasNativeHost()) return;
-      unlisten = await onCoachEvent(handleCoachEvent);
-      try {
-        await startCoach();
-      } catch (error) {
-        if (!disposed) {
-          coachStatus = "error";
-          coachDetail = String(error);
-        }
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-      unlistenReview?.();
-    };
+    if (savedUsername && hasNativeHost()) void syncProfile(savedUsername);
   });
 
-  function selectPly(ply: number) {
-    currentPly = Math.max(0, Math.min(game.moves.length, ply));
-    variationPly = null;
-    selected = null;
-  }
-
-  function selectVariationPly(ply: number) {
-    if (!variation) return;
-    variationPly = Math.max(1, Math.min(variation.moves.length, ply));
-    selected = null;
-    void requestVariationAnalysis(variation.snapshots[variationPly].fen);
-  }
-
-  function sameMove(
-    move: { from: string; to: string; promotion?: string },
-    from: string,
-    to: string,
-  ) {
-    return move.from === from && move.to === to;
-  }
-
-  function handleSquare(square: string) {
-    const piece = boardPosition.get(square as Square);
-
-    if (!selected) {
-      if (piece?.color === boardPosition.turn()) selected = square;
+  async function syncProfile(value: string) {
+    let normalized: string;
+    try {
+      normalized = normalizeChessComUsername(value);
+    } catch (error) {
+      syncError = error instanceof Error ? error.message : String(error);
       return;
     }
 
-    if (selected === square) {
-      selected = null;
-      return;
-    }
-
-    if (legalTargets.includes(square as Square)) {
-      const from = selected;
-      selected = null;
-
-      if (!exploring) {
-        const mainlineMove = game.moves[currentPly];
-        if (mainlineMove && sameMove(mainlineMove, from, square)) {
-          selectPly(currentPly + 1);
-          return;
-        }
-
-        const nextVariation = createVariation(
-          game,
-          currentPly,
-          from,
-          square,
-        );
-        if (!nextVariation) return;
-        variation = nextVariation;
-        variationPly = 1;
-        void requestVariationAnalysis(nextVariation.snapshots[1].fen);
-        return;
-      }
-
-      const existingMove = variation!.moves[variationPly!];
-      if (existingMove && sameMove(existingMove, from, square)) {
-        variationPly = variationPly! + 1;
-        void requestVariationAnalysis(variation!.snapshots[variationPly!].fen);
-        return;
-      }
-
-      const nextVariation = extendVariation(
-        variation!,
-        variationPly!,
-        from,
-        square,
+    syncing = true;
+    syncError = "";
+    try {
+      const next = await getChessComDashboard(normalized);
+      username = next.profile.username || normalized;
+      usernameInput = username;
+      dashboard = next;
+      editingProfile = false;
+      reviewedUrls = reviewedGameUrls();
+      localStorage.setItem(CHESSCOM_USERNAME_STORAGE_KEY, username);
+      localStorage.setItem(
+        CHESSCOM_DASHBOARD_STORAGE_KEY,
+        JSON.stringify({ username, dashboard: next }),
       );
-      if (!nextVariation) return;
-      variation = nextVariation;
-      variationPly = variationPly! + 1;
-      void requestVariationAnalysis(nextVariation.snapshots[variationPly!].fen);
-      return;
-    }
-
-    selected = piece?.color === boardPosition.turn() ? square : null;
-  }
-
-  async function requestVariationAnalysis(fen: string) {
-    if (!engine.available || variationAnalyses[fen] || variationPending[fen]) {
-      return;
-    }
-    variationPending = { ...variationPending, [fen]: true };
-    variationError = "";
-
-    try {
-      const result = await analyzePosition(fen, 16, 3);
-      variationAnalyses = { ...variationAnalyses, [fen]: result };
     } catch (error) {
-      if (snapshot.fen === fen) variationError = String(error);
+      syncError = error instanceof Error ? error.message : String(error);
     } finally {
-      const { [fen]: _completed, ...remaining } = variationPending;
-      variationPending = remaining;
+      syncing = false;
     }
   }
 
-  function stepBackward() {
-    if (exploring) {
-      if (variationPly! > 1) {
-        selectVariationPly(variationPly! - 1);
-      } else {
-        selectPly(variation!.rootPly);
-      }
-      return;
-    }
-    selectPly(currentPly - 1);
+  function submitUsername(event: SubmitEvent) {
+    event.preventDefault();
+    void syncProfile(usernameInput);
   }
 
-  function stepForward() {
-    if (exploring) {
-      if (variationPly! < variation!.moves.length) {
-        selectVariationPly(variationPly! + 1);
-      }
-      return;
-    }
-    selectPly(currentPly + 1);
-  }
-
-  function goToStart() {
-    selectPly(0);
-  }
-
-  function goToEnd() {
-    selectPly(game.moves.length);
-  }
-
-  function handleKeyboardNavigation(event: KeyboardEvent) {
-    if (
-      event.defaultPrevented ||
-      event.altKey ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.shiftKey
-    ) {
-      return;
-    }
-    const target = event.target as HTMLElement | null;
-    if (
-      target?.matches("input, textarea, select, [contenteditable='true']")
-    ) {
-      return;
-    }
-
-    if (event.key === "ArrowLeft" && canGoBack) {
-      event.preventDefault();
-      stepBackward();
-    } else if (event.key === "ArrowRight" && canGoForward) {
-      event.preventDefault();
-      stepForward();
-    }
-  }
-
-  async function requestGameReview(force = false) {
-    if (!engine.available) return;
-    if (reviewBusy) {
-      reviewQueued = true;
-      forceQueuedReview ||= force;
-      return;
-    }
-
-    const requestedGame = game;
-    const requestedPgn = game.pgn;
-    reviewBusy = true;
-    reviewError = "";
-    reviewProgress = {
-      gameKey: "",
-      completed: 0,
-      total: requestedGame.snapshots.length,
-      ply: 0,
-    };
-
+  async function openGame(game: ChessComGame) {
     try {
-      const result = await reviewGame(requestedGame, force);
-      if (game.pgn === requestedPgn) review = result;
+      const parsed = parsePgn(game.pgn);
+      if (!parsed.moves.length) throw new Error("This game has no playable moves.");
+      openingGameUrl = game.url;
+      localStorage.setItem(
+        STUDY_STORAGE_KEY,
+        JSON.stringify({
+          pgn: game.pgn,
+          currentPly: parsed.moves.length,
+          sourceUrl: game.url,
+        }),
+      );
+      await goto("/study");
     } catch (error) {
-      if (game.pgn === requestedPgn) reviewError = String(error);
-    } finally {
-      reviewBusy = false;
-      if (reviewQueued) {
-        const queuedForce = forceQueuedReview;
-        reviewQueued = false;
-        forceQueuedReview = false;
-        void requestGameReview(queuedForce);
-      }
+      openingGameUrl = "";
+      syncError = `Could not open this game: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 
-  function importPgn() {
-    importError = "";
+  function gamesFor(timeClass: ChessComTimeClass) {
+    return timeClass === "rapid" ? rapidGames : blitzGames;
+  }
+
+  function formatGameDate(timestamp: number) {
+    return gameDateFormatter.format(new Date(timestamp * 1000));
+  }
+
+  function formatHistoryTimeControl(value: string) {
+    const formatted = formatChessComTimeControl(value);
+    return formatted.endsWith("s") ? formatted : `${formatted} min`;
+  }
+
+  function isCurrentPlayer(playerUsername: string) {
+    return playerUsername.toLowerCase() === username.toLowerCase();
+  }
+
+  function scoreFor(game: ChessComGame, side: "white" | "black") {
+    const player = game[side];
+    const opponent = side === "white" ? game.black : game.white;
+    if (player.result === "win") return "1";
+    if (opponent.result === "win") return "0";
+    return "½";
+  }
+
+  function formatAccuracy(value: number | null | undefined) {
+    return value == null ? "—" : `${value.toFixed(1)}%`;
+  }
+
+  function fullMoveCount(game: ChessComGame) {
     try {
-      const next = parsePgn(pgnDraft);
-      if (!next.moves.length) throw new Error("The PGN does not contain any moves.");
-      game = next;
-      currentPly = next.moves.length;
-      variation = null;
-      variationPly = null;
-      selected = null;
-      review = null;
-      studyTab = "review";
-      importOpen = false;
-      pgnDraft = "";
-      if (engine.available) void requestGameReview();
-    } catch (error) {
-      importError = error instanceof Error ? error.message : String(error);
+      return Math.ceil(parsePgn(game.pgn).moves.length / 2);
+    } catch {
+      return "—";
     }
   }
 
-  function coachContext(): string {
-    const activeMoves = exploring
-      ? [
-          ...game.moves.slice(0, variation!.rootPly),
-          ...variation!.moves.slice(0, variationPly!),
-        ]
-      : game.moves.slice(0, currentPly);
-    const moves = activeMoves
-      .map((move) => move.san)
-      .join(" ");
-    const lastMove = activeMoves.at(-1) ?? null;
-    const previousFen = exploring
-      ? variation!.snapshots[variationPly! - 1]?.fen
-      : currentPly > 0
-        ? game.snapshots[currentPly - 1].fen
-        : null;
-    const selectedPly = exploring
-      ? variation!.rootPly + variationPly!
-      : currentPly;
-    const recentConversation = coachMessages
-      .slice(-6)
-      .map((item) => `${item.role === "user" ? "Student" : "Sol"}: ${item.text}`)
-      .join("\n");
-    return [
-      `Game: ${game.headers.White || "White"} vs ${game.headers.Black || "Black"}`,
-      ...(review
-        ? [
-            `Completed whole-game review key: ${review.gameKey}`,
-            `Whole-game review: ${review.moves.length} moves analyzed once by ${review.engine}; use the ChessCave MCP get_game_review tool for game-level coaching questions`,
-            `Review accuracy: White ${review.summary.whiteAccuracy.toFixed(1)}, Black ${review.summary.blackAccuracy.toFixed(1)}`,
-          ]
-        : [
-            `Whole-game review: ${reviewBusy ? "still running" : "not available"}`,
-          ]),
-      `Selected position: ${currentLabel} (ply ${selectedPly})`,
-      `Line: ${exploring ? "exploratory variation" : "imported game mainline"}`,
-      `FEN: ${snapshot.fen}`,
-      ...(lastMove
-        ? [
-            `Previous FEN: ${previousFen}`,
-            `Last move: ${lastMove.san} (${lastMove.lan} in UCI notation)`,
-          ]
-        : []),
-      `Displayed clocks: White ${snapshot.clocks.w ?? "unknown"} seconds, Black ${snapshot.clocks.b ?? "unknown"} seconds`,
-      `Moves played: ${moves || "(starting position)"}`,
-      `Side to move: ${sideToMove(snapshot.fen)}`,
-      ...(currentOpening
-        ? [`Opening: ${currentOpening.eco} · ${currentOpening.name}`]
-        : []),
-      ...(positionReview
-        ? [
-            `Saved Stockfish review: ${principal?.scoreMate !== null && principal?.scoreMate !== undefined ? `mate ${principal.scoreMate}` : `${((principal?.scoreCp ?? 0) / 100).toFixed(2)} pawns`} from White's perspective`,
-            `Stockfish best move: ${positionReview.bestMove ?? "none"}`,
-          ]
-        : []),
-      ...(moveReview
-        ? [
-            `Last move classification: ${moveReview.classification}`,
-            `Expected points lost: ${moveReview.expectedPointsLost.toFixed(3)}`,
-          ]
-        : []),
-      ...(recentConversation ? [`Recent conversation:\n${recentConversation}`] : []),
-    ].join("\n");
+  function formatSyncDate(timestamp: number) {
+    return syncDateFormatter.format(new Date(timestamp));
   }
 
-  async function askCoach(text: string) {
-    if (coachStatus !== "ready") return;
-    const id = crypto.randomUUID();
-    coachMessages = [...coachMessages, { id, role: "user", text }];
-    coachStatus = "thinking";
-    coachDetail = "Sol is studying the position…";
-    coachActivity = {
-      kind: "thinking",
-      label: "Considering your question",
-      detail: "Sol is deciding what evidence to inspect.",
-    };
-    try {
-      await sendCoachMessage(text, coachContext());
-    } catch (error) {
-      coachStatus = "error";
-      coachDetail = String(error);
-      coachActivity = null;
-    }
+  function formatJoined(timestamp: number | null) {
+    if (!timestamp) return null;
+    return new Date(timestamp * 1000).getFullYear();
   }
 
-  async function startNewCoachConversation() {
-    if (!hasNativeHost() || coachStatus === "starting" || coachStatus === "thinking") return;
-
-    coachStatus = "starting";
-    coachDetail = "Starting a new conversation…";
-    coachActivity = null;
-    activeCoachTools = {};
-    try {
-      await newCoachThread();
-      coachMessages = [];
-    } catch (error) {
-      coachStatus = "error";
-      coachDetail = String(error);
-    }
-  }
-
-  function coachToolName(item: Record<string, unknown> | undefined): string {
-    const raw = String(item?.tool ?? item?.toolName ?? item?.name ?? "chess tool");
-    return raw.split(/[./]/).at(-1) || raw;
-  }
-
-  function coachToolLabel(tool: string, waiting = false): CoachActivity {
-    const verb = waiting ? "Waiting for" : "Calling";
-    const labels: Record<string, [string, string]> = {
-      get_position_image: [
-        `${verb} board image`,
-        waiting
-          ? "ChessCave is rendering the requested position."
-          : "Opening the position through ChessCave MCP.",
-      ],
-      get_game_review: [
-        `${verb} full-game review`,
-        waiting
-          ? "ChessCave is loading the saved Stockfish review."
-          : "Reading the game evidence through ChessCave MCP.",
-      ],
-      analyze_position: [
-        `${verb} Stockfish analysis`,
-        waiting
-          ? "Stockfish is calculating candidate moves."
-          : "Sending this position to the ChessCave engine.",
-      ],
-      compare_moves: [
-        `${verb} move comparison`,
-        waiting
-          ? "Stockfish is comparing the played move and best line."
-          : "Sending both lines to the ChessCave engine.",
-      ],
-    };
-    const [label, detail] = labels[tool] ?? [
-      `${verb} ChessCave tool`,
-      waiting ? "Waiting for the MCP result." : `Using ${tool} through MCP.`,
-    ];
-    return { kind: waiting ? "waiting" : "calling", label, detail };
-  }
-
-  function handleCoachEvent(event: Record<string, unknown>) {
-    const method = typeof event.method === "string" ? event.method : "";
-    const params = (event.params ?? {}) as Record<string, unknown>;
-
-    if (event.id === 1 && event.result) {
-      coachStatus = "ready";
-      coachDetail = "Current position synced";
-      return;
-    }
-
-    if (event.error) {
-      const error = event.error as Record<string, unknown>;
-      coachStatus = "error";
-      coachDetail = String(error.message ?? "Codex app-server error");
-      coachActivity = null;
-      activeCoachTools = {};
-      return;
-    }
-
-    if (method === "chesscave/ready") {
-      coachStatus = "ready";
-      coachDetail = "Current position synced";
-      return;
-    }
-
-    if (method === "chesscave/error") {
-      coachStatus = "error";
-      coachDetail = String(params.message ?? "Codex app-server stopped");
-      coachActivity = null;
-      activeCoachTools = {};
-      return;
-    }
-
-    if (method === "mcpServer/startupStatus/updated") {
-      const status = String(params.status ?? "");
-      coachDetail =
-        status === "ready"
-          ? "Stockfish tools connected"
-          : status === "failed"
-            ? "Chess tools failed to start"
-            : "Connecting chess tools…";
-      return;
-    }
-
-    if (method === "item/mcpToolCall/progress") {
-      const itemId = String(params.itemId ?? params.item_id ?? "");
-      const tool =
-        activeCoachTools[itemId] ??
-        Object.values(activeCoachTools).at(-1) ??
-        "chess tool";
-      coachActivity = coachToolLabel(tool, true);
-      coachDetail = coachActivity.label;
-      return;
-    }
-
-    if (method === "item/started") {
-      const item = params.item as Record<string, unknown> | undefined;
-      if (item?.type === "mcpToolCall") {
-        const itemId = String(item.id ?? crypto.randomUUID());
-        const tool = coachToolName(item);
-        activeCoachTools = { ...activeCoachTools, [itemId]: tool };
-        coachActivity = coachToolLabel(tool);
-        coachDetail = coachActivity.label;
-      }
-      if (item?.type === "agentMessage") {
-        coachActivity = {
-          kind: "replying",
-          label: "Writing a response",
-          detail: "Sol is turning the evidence into a clear explanation.",
-        };
-        coachDetail = coachActivity.label;
-        const messageId = String(item.id ?? crypto.randomUUID());
-        if (!coachMessages.some((message) => message.id === messageId)) {
-          coachMessages = [
-            ...coachMessages,
-            { id: messageId, role: "assistant", text: "", pending: true },
-          ];
-        }
-      }
-      return;
-    }
-
-    if (method === "item/agentMessage/delta") {
-      coachActivity = {
-        kind: "replying",
-        label: "Writing a response",
-        detail: "The answer is arriving now.",
-      };
-      coachDetail = coachActivity.label;
-      const itemId = String(params.itemId ?? params.item_id ?? "active-assistant");
-      const delta = String(params.delta ?? "");
-      const existing = coachMessages.find((message) => message.id === itemId);
-      if (existing) {
-        existing.text += delta;
-      } else {
-        coachMessages = [
-          ...coachMessages,
-          { id: itemId, role: "assistant", text: delta, pending: true },
-        ];
-      }
-      return;
-    }
-
-    if (method === "item/completed") {
-      const item = params.item as Record<string, unknown> | undefined;
-      if (item?.type === "mcpToolCall") {
-        const itemId = String(item.id ?? "");
-        const { [itemId]: _completed, ...remaining } = activeCoachTools;
-        activeCoachTools = remaining;
-        const nextTool = Object.values(remaining).at(-1);
-        coachActivity = nextTool
-          ? coachToolLabel(nextTool, true)
-          : {
-              kind: "thinking",
-              label: "Reviewing the tool result",
-              detail: "Sol is connecting the evidence to your question.",
-            };
-        coachDetail = coachActivity.label;
-      }
-      if (item?.type === "agentMessage") {
-        const itemId = String(item.id ?? "");
-        const existing = coachMessages.find((message) => message.id === itemId);
-        if (existing) {
-          existing.pending = false;
-          if (!existing.text && typeof item.text === "string") existing.text = item.text;
-        } else if (typeof item.text === "string") {
-          coachMessages = [
-            ...coachMessages,
-            { id: itemId || crypto.randomUUID(), role: "assistant", text: item.text },
-          ];
-        }
-      }
-      return;
-    }
-
-    if (method === "turn/completed") {
-      for (const message of coachMessages) message.pending = false;
-      coachStatus = "ready";
-      coachDetail = "Current position synced";
-      coachActivity = null;
-      activeCoachTools = {};
-    }
+  function trendLabel(change: number | null) {
+    if (change === null) return "Recent form";
+    return `${change > 0 ? "+" : ""}${change} recently`;
   }
 </script>
 
 <svelte:head>
-  <title>ChessCave — Your private chess study</title>
+  <title>Home — ChessCave</title>
   <meta
     name="description"
-    content="A private chess study powered by Stockfish and your Codex coach."
+    content="Your recent Chess.com games, rating progress, and saved ChessCave reviews."
   />
 </svelte:head>
 
-<svelte:window onkeydown={handleKeyboardNavigation} />
-
 <div class="app-shell">
   {#snippet headerActions()}
-    <div class="top-actions">
-      {#if reviewBusy || variationPositionBusy}
-        <span class="engine-chip working">
-          <i></i>
-          {variationPositionBusy
-            ? "Analyzing variation"
-            : `Reviewing ${reviewProgress?.completed ?? 0}/${reviewProgress?.total ?? game.snapshots.length}`}
-        </span>
-      {:else if review}
-        <span class="engine-chip"><i></i>Review ready</span>
-      {/if}
-      <button type="button" onclick={() => { pgnDraft = ""; importOpen = true; }}>Import game</button>
-    </div>
+    {#if dashboard}
+      <div class="top-actions">
+        <button
+          class="quiet-action"
+          type="button"
+          onclick={() => {
+            usernameInput = username;
+            editingProfile = !editingProfile;
+          }}
+        >Change player</button>
+        <button
+          class:working={syncing}
+          class="refresh-action"
+          type="button"
+          disabled={syncing}
+          onclick={() => void syncProfile(username)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 7v5h-5M5 17v-5h5"></path>
+            <path d="M17.5 9A6.5 6.5 0 0 0 6 7.5L5 12m14 0-1 4.5A6.5 6.5 0 0 1 6.5 15"></path>
+          </svg>
+          {syncing ? "Refreshing" : "Refresh"}
+        </button>
+      </div>
+    {/if}
   {/snippet}
 
   <AppHeader
-    active="study"
-    title={matchupTitle}
-    subtitle={`${eventTitle}${currentOpening?.name || game.headers.Opening ? ` · ${currentOpening?.name || game.headers.Opening}` : ""}`}
+    active="home"
+    title={dashboard ? profileTitle : "Your chess, ready to study"}
+    subtitle={dashboard
+      ? `Chess.com · Updated ${formatSyncDate(dashboard.fetchedAtMs)}`
+      : "Connect a public Chess.com profile"}
     actions={headerActions}
   />
 
   <main>
-    <section class="workspace">
-      <div class="summary-column">
-        <GameSummary
-          presentation={reviewPresentation}
-          whiteName={whitePlayer.name}
-          blackName={blackPlayer.name}
-          whiteRating={whitePlayer.rating}
-          blackRating={blackPlayer.rating}
-          {currentPly}
-          busy={reviewBusy}
-          progress={reviewBusy
-            ? `${reviewProgress?.completed ?? 0}/${reviewProgress?.total ?? game.snapshots.length}`
-            : ""}
-          error={reviewError || (!engine.available ? engine.message : "")}
-          onSelect={selectPly}
-        />
-      </div>
+    {#if hydrated && !dashboard}
+      <section class="onboarding" aria-labelledby="onboarding-title">
+        <div class="onboarding-copy">
+          <span class="eyebrow">CHESS.COM LIBRARY</span>
+          <h2 id="onboarding-title">Bring your games into the cave.</h2>
+          <p>
+            Connect a public username once. ChessCave will keep your recent Rapid
+            and Blitz games close, then open any of them directly in the study board.
+          </p>
+        </div>
 
-      <div class="study-column">
-        <div class="board-stage">
-          <div class="player-slot top-player">
-            <PlayerStrip
-              side={topPlayer.side}
-              name={topPlayer.name}
-              rating={topPlayer.rating}
-              clock={snapshot.clocks[topPlayer.side]}
-              active={activeSide === topPlayer.side}
+        <form class="username-form" onsubmit={submitUsername}>
+          <label for="chesscom-username">What is your username on Chess.com?</label>
+          <div class="username-field">
+            <span aria-hidden="true">@</span>
+            <input
+              id="chesscom-username"
+              bind:value={usernameInput}
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="your_username"
+              disabled={syncing}
             />
-          </div>
-
-          <div class="evaluation-slot">
-            <EvaluationBar
-              scoreCp={principal?.scoreCp ?? null}
-              scoreMate={principal?.scoreMate ?? null}
-              {flipped}
-            />
-          </div>
-
-          <div class="board-wrap">
-            <ChessBoard
-              fen={snapshot.fen}
-              {flipped}
-              lastMove={snapshot.lastMove}
-              {selected}
-              {legalTargets}
-              annotation={currentMoveClassification}
-              engineArrow={bestMoveArrow}
-              onSquareClick={handleSquare}
-            />
-          </div>
-
-          <div class="board-tools">
-            <button type="button" title="Flip board" aria-label="Flip board" onclick={() => (flipped = !flipped)}>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M5.4 8.5A7.5 7.5 0 0 1 18 6.2l1.8 1.9M18.6 15.5A7.5 7.5 0 0 1 6 17.8l-1.8-1.9"></path>
-                <path d="M19.8 3.9v4.2h-4.2M4.2 20.1v-4.2h4.2"></path>
-              </svg>
-            </button>
-            <button
-              class:working={reviewBusy}
-              type="button"
-              title="Refresh full-game review"
-              aria-label="Refresh full-game review"
-              disabled={!engine.available || reviewBusy}
-              onclick={() => requestGameReview(true)}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z"></path>
-              </svg>
+            <button type="submit" disabled={syncing || !usernameInput.trim()}>
+              {syncing ? "Connecting…" : "Connect profile"}
             </button>
           </div>
-
-          <div class="player-slot bottom-player">
-            <PlayerStrip
-              side={bottomPlayer.side}
-              name={bottomPlayer.name}
-              rating={bottomPlayer.rating}
-              clock={snapshot.clocks[bottomPlayer.side]}
-              active={activeSide === bottomPlayer.side}
-            />
-          </div>
-        </div>
-
-        <div class="board-footer">
-          <div class="position-summary">
-            <span>{exploring ? "Variation" : "Current position"}</span>
-            <strong>{currentLabel}</strong>
-            {#if currentMoveClassification}
-              <span class={`classification-pill ${currentMoveClassification}`}>
-                {currentMoveClassification}
-              </span>
-            {:else if exploring}
-              <span class="variation-pill">analysis line</span>
-            {/if}
-          </div>
-
-          <div class="navigation" aria-label="Move navigation">
-            <button type="button" title="First move" aria-label="First move" onclick={goToStart} disabled={!exploring && currentPly === 0}>‹‹</button>
-            <button type="button" title="Previous move · Left arrow" aria-label="Previous move" onclick={stepBackward} disabled={!canGoBack}>‹</button>
-            <span>{navigationLabel}</span>
-            <button type="button" title="Next move · Right arrow" aria-label="Next move" onclick={stepForward} disabled={!canGoForward}>›</button>
-            <button type="button" title="Last game move" aria-label="Last game move" onclick={goToEnd} disabled={!exploring && currentPly === game.moves.length}>››</button>
-          </div>
-        </div>
-
-        <div class="move-timeline">
-          <span class="timeline-label">Game</span>
-          <MoveList
-            moves={game.moves}
-            reviews={reviewMoves}
-            {variation}
-            {variationPly}
-            bookThroughPly={mainlineBookThrough}
-            {variationBookThrough}
-            {currentPly}
-            onSelect={selectPly}
-            onSelectVariation={selectVariationPly}
-          />
-        </div>
-      </div>
-
-      <section class="study-panel" aria-label="Game study">
-        <header class="panel-header">
-          <div>
-            <span class="panel-kicker">Study</span>
-            <strong>
-              {exploring
-                ? "Exploratory line"
-                : review
-                  ? "Full-game review loaded"
-                  : "Position context"}
-            </strong>
-          </div>
-          <div class="panel-tabs" role="tablist" aria-label="Study mode">
-            <button
-              class:active={studyTab === "review"}
-              type="button"
-              role="tab"
-              aria-selected={studyTab === "review"}
-              onclick={() => (studyTab = "review")}
-            >Review</button>
-            <button
-              class:active={studyTab === "coach"}
-              type="button"
-              role="tab"
-              aria-selected={studyTab === "coach"}
-              onclick={() => (studyTab = "coach")}
-            >Coach</button>
-          </div>
-        </header>
-
-        {#if studyTab === "review"}
-          <div class="review-panel" role="tabpanel">
-            <div class="review-lead">
-              <span>{exploring ? "Exploratory position" : "Position review"}</span>
-              <div>
-                <h2>{currentLabel}</h2>
-                {#if currentMoveClassification}
-                  <span class={`classification-text ${currentMoveClassification}`}>
-                    {currentMoveClassification}
-                  </span>
-                {/if}
-              </div>
-              {#if principal}
-                <p>
-                  Stockfish evaluates this position as
-                  <strong>
-                    {principal.scoreMate !== null
-                      ? `mate in ${Math.abs(principal.scoreMate)}`
-                      : `${(principal.scoreCp ?? 0) >= 0 ? "+" : ""}${((principal.scoreCp ?? 0) / 100).toFixed(2)}`}
-                  </strong>
-                  from White’s perspective.
-                </p>
-              {/if}
-            </div>
-
-            {#if currentOpening}
-            <div class="opening-band">
-              <MoveBadge kind="book" compact />
-              <div>
-                <span>Opening · {currentOpening.eco}</span>
-                <strong>{currentOpening.name}</strong>
-              </div>
-              <small>
-                {currentOpening.matchedPly === (exploring ? variation!.rootPly + variationPly! : currentPly)
-                  ? "book position"
-                  : "last known position"}
-              </small>
-            </div>
-          {:else if openingError}
-            <div class="opening-band error">
-              <span>Opening book unavailable</span>
-              <small>{openingError}</small>
-            </div>
-            {/if}
-
-            {#if bestMoveArrow && bestAlternativeSan}
-            <div class="best-alternative">
-              <span class="suggestion-arrow" aria-hidden="true">→</span>
-              <div>
-                <span>Stockfish alternative</span>
-                <strong>Best was {bestAlternativeSan}</strong>
-              </div>
-            </div>
-            {/if}
-
-            {#if variationError && exploring}
-            <div class="engine-notice error">{variationError}</div>
-            {:else if reviewError && !exploring}
-            <div class="engine-notice error">{reviewError}</div>
-            {:else if !engine.available}
-            <div class="engine-notice">
-              <span>Stockfish is unavailable.</span>
-              <small>{engine.message}</small>
-            </div>
-            {:else if variationPositionBusy && !positionReview}
-            <div class="engine-notice calculating">
-              <span></span>
-              Evaluating this variation…
-            </div>
-            {:else if reviewBusy && !positionReview && !exploring}
-            <div class="engine-notice calculating">
-              <span></span>
-              Reviewing the full game · {reviewProgress?.completed ?? 0}/{reviewProgress?.total ?? game.snapshots.length}
-            </div>
-            {:else if positionReview?.lines.length}
-              {#if reviewBusy}
-              <div class="review-refresh">
-                Updating review · {reviewProgress?.completed ?? 0}/{reviewProgress?.total ?? game.snapshots.length}
-              </div>
-              {/if}
-              <details class="engine-lines">
-                <summary>Engine lines <span>{positionReview.lines.length}</span></summary>
-                <div class="lines">
-                  {#each positionReview.lines as line}
-                    <div class="line">
-                      <span class:mate={line.scoreMate !== null} class="score">
-                        {line.scoreMate !== null
-                          ? `M${Math.abs(line.scoreMate)}`
-                          : `${(line.scoreCp ?? 0) >= 0 ? "+" : ""}${((line.scoreCp ?? 0) / 100).toFixed(2)}`}
-                      </span>
-                      <p>{uciLineToSan(snapshot.fen, line.moves).slice(0, 8).join(" ")}</p>
-                      <small>depth {line.depth}</small>
-                    </div>
-                  {/each}
-                </div>
-              </details>
-            {:else}
-            <div class="engine-notice">This game has not been reviewed yet.</div>
-            {/if}
-          </div>
-        {:else}
-          <CoachSidebar
-            messages={coachMessages}
-            status={coachStatus}
-            detail={coachDetail}
-            activity={coachActivity}
-            contextLabel={`${currentLabel}${review ? " · Full-game review loaded" : ""}`}
-            busy={coachStatus === "thinking"}
-            onSend={askCoach}
-            onNewConversation={startNewCoachConversation}
-          />
-        {/if}
+          {#if syncError}<p class="form-error" role="alert">{syncError}</p>{/if}
+          <small>Only public profile, rating, and game data is requested.</small>
+        </form>
       </section>
-    </section>
+    {:else if dashboard}
+      <div class="dashboard">
+        {#if editingProfile}
+          <form class="profile-editor" onsubmit={submitUsername}>
+            <label for="change-username">Chess.com username</label>
+            <div>
+              <input
+                id="change-username"
+                bind:value={usernameInput}
+                autocapitalize="none"
+                spellcheck="false"
+                disabled={syncing}
+              />
+              <button type="submit" disabled={syncing || !usernameInput.trim()}>
+                {syncing ? "Loading…" : "Use this profile"}
+              </button>
+              <button class="cancel" type="button" onclick={() => (editingProfile = false)}>Cancel</button>
+            </div>
+          </form>
+        {/if}
+
+        {#if syncError}
+          <div class="sync-error" role="status">
+            <span>{syncError}</span>
+            <button type="button" onclick={() => (syncError = "")}>Dismiss</button>
+          </div>
+        {/if}
+
+        <section class="profile" aria-label="Chess.com profile">
+          <div class="avatar">
+            {#if dashboard.profile.avatar}
+              <img src={dashboard.profile.avatar} alt="" />
+            {:else}
+              <span>{dashboard.profile.username.slice(0, 1).toUpperCase()}</span>
+            {/if}
+          </div>
+          <div class="identity">
+            <span class="eyebrow">CHESS.COM PROFILE</span>
+            <div class="profile-name">
+              <h2>{dashboard.profile.name || dashboard.profile.username}</h2>
+              {#if dashboard.profile.title}<span>{dashboard.profile.title}</span>{/if}
+            </div>
+            <p>
+              @{dashboard.profile.username}
+              {#if dashboard.profile.location} · {dashboard.profile.location}{/if}
+              {#if formatJoined(dashboard.profile.joined)} · Member since {formatJoined(dashboard.profile.joined)}{/if}
+            </p>
+          </div>
+          <a
+            href={dashboard.profile.url || `https://www.chess.com/member/${dashboard.profile.username}`}
+            target="_blank"
+            rel="noreferrer"
+          >View public profile <span aria-hidden="true">↗</span></a>
+        </section>
+
+        <section class="ratings" aria-label="Rating progress">
+          {#each timeClasses as timeClass}
+            {@const stats = ratingStatsFor(dashboard, timeClass.id)}
+            {@const history = ratingHistory(dashboard, username, timeClass.id)}
+            {@const change = recentRatingChange(stats, history)}
+            <article class="rating-card">
+              <header>
+                <div>
+                  <span>{timeClass.label}</span>
+                  <strong>{stats?.last?.rating ?? "—"}</strong>
+                </div>
+                <div class:positive={change !== null && change > 0} class:negative={change !== null && change < 0} class="trend">
+                  {trendLabel(change)}
+                </div>
+              </header>
+              <RatingSparkline
+                points={history}
+                label={`${timeClass.label} rating history across ${history.length} recent games`}
+              />
+              <footer>
+                <span><strong>{stats?.record.win ?? 0}</strong> wins</span>
+                <span><strong>{stats?.record.draw ?? 0}</strong> draws</span>
+                <span><strong>{stats?.record.loss ?? 0}</strong> losses</span>
+                <span class="best">Best {stats?.best?.rating ?? "—"}</span>
+              </footer>
+            </article>
+          {/each}
+        </section>
+
+        <section class="recent-heading">
+          <div>
+            <span class="eyebrow">RECENT GAMES</span>
+            <h2>Choose a game to study.</h2>
+          </div>
+          <p>Opening a game starts its Stockfish review. Completed reviews are reused later.</p>
+        </section>
+
+        <section
+          class="history"
+          class:blitz-history={activeTimeClass === "blitz"}
+          aria-labelledby="game-history-title"
+        >
+          <div class="history-toolbar">
+            <div>
+              <h3 id="game-history-title">Game history</h3>
+              <span>{activeGames.length} recent {activeGames.length === 1 ? "game" : "games"}</span>
+            </div>
+            <div class="history-tabs" role="tablist" aria-label="Game type">
+              {#each timeClasses as timeClass}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTimeClass === timeClass.id}
+                  class:active={activeTimeClass === timeClass.id}
+                  onclick={() => (activeTimeClass = timeClass.id)}
+                >
+                  {timeClass.label}
+                  <span>{gamesFor(timeClass.id).length}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          {#if activeGames.length}
+            <div class="history-header" aria-hidden="true">
+              <span>Time</span>
+              <span>Players</span>
+              <span>Result</span>
+              <span class="accuracy-column">Accuracy</span>
+              <span class="moves-column">Moves</span>
+              <span class="date-column">Date</span>
+              <span>Review</span>
+            </div>
+            <div class="history-list" role="tabpanel">
+              {#each activeGames as game (game.uuid || game.url)}
+                {@const summary = summarizeChessComGame(game, username)}
+                <button
+                  class="history-row"
+                  type="button"
+                  disabled={Boolean(openingGameUrl)}
+                  aria-label={`${summary.outcome === "win" ? "Win" : summary.outcome === "draw" ? "Draw" : "Loss"} against ${summary.opponent.username}. Open game review.`}
+                  onclick={() => void openGame(game)}
+                >
+                  <span class="history-time">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="12" cy="13" r="7"></circle>
+                      <path d="M12 6V3m-3 0h6m-3 10 3-2"></path>
+                    </svg>
+                    <span>
+                      <strong>{formatHistoryTimeControl(game.timeControl)}</strong>
+                      <small>{formatGameDate(game.endTime)}</small>
+                    </span>
+                  </span>
+
+                  <span class="history-players">
+                    <span class:current-player={isCurrentPlayer(game.white.username)}>
+                      <i class="player-avatar white-avatar">
+                        {#if isCurrentPlayer(game.white.username) && dashboard.profile.avatar}
+                          <img src={dashboard.profile.avatar} alt="" />
+                        {:else}
+                          {game.white.username.slice(0, 1).toUpperCase()}
+                        {/if}
+                      </i>
+                      <i class="piece-color white"></i>
+                      <strong>{game.white.username}</strong>
+                      <em>({game.white.rating})</em>
+                      {#if isCurrentPlayer(game.white.username)}<small>You</small>{/if}
+                    </span>
+                    <span class:current-player={isCurrentPlayer(game.black.username)}>
+                      <i class="player-avatar black-avatar">
+                        {#if isCurrentPlayer(game.black.username) && dashboard.profile.avatar}
+                          <img src={dashboard.profile.avatar} alt="" />
+                        {:else}
+                          {game.black.username.slice(0, 1).toUpperCase()}
+                        {/if}
+                      </i>
+                      <i class="piece-color black"></i>
+                      <strong>{game.black.username}</strong>
+                      <em>({game.black.rating})</em>
+                      {#if isCurrentPlayer(game.black.username)}<small>You</small>{/if}
+                    </span>
+                  </span>
+
+                  <span class="history-result">
+                    <strong class={summary.outcome}>
+                      {summary.outcome === "win" ? "Win" : summary.outcome === "draw" ? "Draw" : "Loss"}
+                    </strong>
+                    <small>{scoreFor(game, "white")}–{scoreFor(game, "black")}</small>
+                  </span>
+
+                  <span class="history-accuracy accuracy-column">
+                    <span>{formatAccuracy(game.accuracies?.white)}</span>
+                    <span>{formatAccuracy(game.accuracies?.black)}</span>
+                  </span>
+
+                  <span class="history-moves moves-column">{fullMoveCount(game)}</span>
+                  <span class="history-date date-column">{formatGameDate(game.endTime)}</span>
+                  <span class="review-status" class:reviewed={reviewedUrls.has(game.url)}>
+                    {openingGameUrl === game.url
+                      ? "Opening…"
+                      : reviewedUrls.has(game.url)
+                        ? "Reviewed"
+                        : "Review"}
+                  </span>
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <div class="empty-games">No recent {activeTimeClass} games found.</div>
+          {/if}
+        </section>
+      </div>
+    {/if}
   </main>
 </div>
 
-{#if importOpen}
-  <div
-    class="modal-backdrop"
-    role="presentation"
-    onclick={(event) => {
-      if (event.target === event.currentTarget) importOpen = false;
-    }}
-  >
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
-      <div class="modal-head">
-        <div>
-          <span class="meta-label">NEW STUDY</span>
-          <h2 id="import-title">Import a PGN</h2>
-        </div>
-        <button type="button" onclick={() => (importOpen = false)}>×</button>
-      </div>
-      <p>Paste a complete game. ChessCave will build its timeline and make every position available to Stockfish and Sol.</p>
-      <textarea bind:value={pgnDraft} rows="13" placeholder={'[Event "My game"]\n\n1. e4 e5 2. Nf3 …'}></textarea>
-      {#if importError}<div class="import-error">{importError}</div>{/if}
-      <div class="modal-actions">
-        <button class="secondary" type="button" onclick={() => { pgnDraft = SAMPLE_PGN; }}>Use sample</button>
-        <button class="primary" type="button" disabled={!pgnDraft.trim()} onclick={importPgn}>Import game</button>
-      </div>
-    </div>
-  </div>
-{/if}
-
 <style>
-  /* ChessCave ethos: one quiet study surface, with the game as the subject. */
   .app-shell {
     position: fixed;
     inset: 0;
     display: grid;
     grid-template-rows: 68px minmax(0, 1fr);
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
     color: var(--ink);
     background: var(--paper);
   }
 
+  main {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
   .top-actions {
     display: flex;
-    gap: 16px;
+    gap: 8px;
     align-items: center;
   }
 
-  .top-actions > button {
+  .top-actions button {
     min-height: 36px;
-    padding: 0 15px;
-    border: 1px solid var(--ink);
+    padding: 0 14px;
     border-radius: 999px;
-    color: var(--pearl-raised);
-    background: var(--ink);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 650;
     cursor: pointer;
   }
 
-  .top-actions > button:hover {
-    border-color: var(--coral-dark);
-    background: var(--coral-dark);
+  .quiet-action {
+    border: 1px solid var(--line-strong);
+    color: var(--ink-soft);
+    background: transparent;
   }
 
-  .engine-chip {
+  .refresh-action {
     display: inline-flex;
     gap: 7px;
     align-items: center;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 550;
+    border: 1px solid var(--ink);
+    color: var(--pearl-raised);
+    background: var(--ink);
   }
 
-  .engine-chip i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--sage);
+  .refresh-action:disabled {
+    opacity: 0.62;
+    cursor: wait;
   }
 
-  .engine-chip.working i {
-    background: var(--coral);
-    animation: pulse 900ms ease-in-out infinite alternate;
-  }
-
-  main {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .workspace {
-    display: grid;
-    grid-template-columns:
-      clamp(230px, 18vw, 270px)
-      minmax(520px, 1fr)
-      minmax(370px, 420px);
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .study-column {
-    --board-size: min(660px, calc(100vh - 270px), calc(100vw - 810px));
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-    padding: 16px 24px 18px;
-    scrollbar-color: var(--line-strong) transparent;
-    background: var(--paper);
-  }
-
-  .summary-column {
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .board-stage {
-    display: grid;
-    grid-template-columns: 28px var(--board-size) 32px;
-    grid-template-rows: auto var(--board-size) auto;
-    column-gap: 9px;
-    row-gap: 5px;
-    justify-content: center;
-    width: auto;
-  }
-
-  .player-slot {
-    grid-column: 2;
-  }
-
-  .top-player {
-    grid-row: 1;
-  }
-
-  .bottom-player {
-    grid-row: 3;
-  }
-
-  .evaluation-slot {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .board-wrap {
-    grid-column: 2;
-    grid-row: 2;
-    width: var(--board-size);
-    min-width: 0;
-    max-width: none;
-  }
-
-  .board-tools {
-    display: grid;
-    grid-column: 3;
-    grid-row: 2;
-    align-content: start;
-    gap: 8px;
-  }
-
-  .board-tools button {
-    display: grid;
-    width: 32px;
-    height: 32px;
-    place-items: center;
-    padding: 0;
-    border: 1px solid var(--line);
-    border-radius: 50%;
-    color: var(--ink-soft);
-    background: var(--pearl);
-    cursor: pointer;
-  }
-
-  .board-tools button:hover:not(:disabled) {
-    color: var(--coral-dark);
-    border-color: var(--coral);
-    background: var(--coral-soft);
-  }
-
-  .board-tools button:disabled {
-    opacity: 0.38;
-  }
-
-  .board-tools svg {
-    width: 16px;
-    height: 16px;
+  .refresh-action svg {
+    width: 14px;
+    height: 14px;
     fill: none;
     stroke: currentColor;
     stroke-linecap: round;
@@ -1295,696 +541,842 @@
     stroke-width: 1.7;
   }
 
-  .board-tools button:last-child svg {
-    fill: currentColor;
-    stroke: none;
+  .refresh-action.working svg {
+    animation: spin 900ms linear infinite;
   }
 
-  .board-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: var(--board-size);
-    min-height: 47px;
-    margin: 8px 0 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .position-summary {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .position-summary > span:first-child {
-    color: var(--muted);
-    font-size: 11px;
-  }
-
-  .position-summary strong {
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 700;
-  }
-
-  .classification-pill,
-  .variation-pill {
-    padding: 3px 7px;
-    border: 0;
-    border-radius: 999px;
-    color: var(--ink-soft);
-    background: var(--sage-soft);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0;
-    text-transform: capitalize;
-  }
-
-  .classification-pill.book {
-    color: #755c3e;
-    background: #eee3d4;
-  }
-
-  .classification-pill.inaccuracy {
-    color: #79581f;
-    background: #f3e5bf;
-  }
-
-  .classification-pill.mistake,
-  .classification-pill.miss,
-  .classification-pill.blunder {
-    color: var(--coral-dark);
-    background: var(--coral-soft);
-  }
-
-  .navigation {
-    display: flex;
-    gap: 3px;
-    align-items: center;
-  }
-
-  .navigation button {
+  .onboarding {
     display: grid;
-    width: 28px;
-    height: 28px;
-    place-items: center;
-    border: 0;
-    border-radius: 50%;
-    color: var(--ink-soft);
-    background: transparent;
-    font-size: 16px;
-    cursor: pointer;
-  }
-
-  .navigation button:hover:not(:disabled) {
-    color: var(--coral-dark);
-    background: var(--coral-soft);
-  }
-
-  .navigation button:disabled {
-    opacity: 0.26;
-  }
-
-  .navigation span {
-    min-width: 54px;
-    color: var(--muted);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
-  }
-
-  .move-timeline {
-    display: grid;
-    grid-template-columns: 40px minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr);
+    gap: clamp(56px, 9vw, 130px);
     align-items: center;
-    width: var(--board-size);
-    min-height: 54px;
+    width: min(1080px, calc(100% - 64px));
+    min-height: 100%;
+    margin: 0 auto;
+    padding: 72px 0 96px;
   }
 
-  .timeline-label {
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .study-panel {
-    display: grid;
-    grid-template-rows: 74px minmax(0, 1fr);
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-    border-left: 1px solid var(--line);
-    background: var(--pearl);
-  }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 20px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .panel-header > div:first-child {
-    display: grid;
-    min-width: 0;
-    gap: 2px;
-  }
-
-  .panel-kicker {
+  .eyebrow {
     color: var(--coral-dark);
     font-size: 9px;
     font-weight: 750;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: 0.13em;
   }
 
-  .panel-header strong {
-    overflow: hidden;
+  .onboarding-copy h2,
+  .recent-heading h2,
+  .identity h2 {
+    margin: 0;
+    font-family: var(--display);
+    font-variation-settings: "opsz" 48, "wght" 570;
+  }
+
+  .onboarding-copy h2 {
+    max-width: 12ch;
+    margin-top: 12px;
+    font-size: clamp(43px, 5vw, 68px);
+    line-height: 0.99;
+  }
+
+  .onboarding-copy p {
+    max-width: 48ch;
+    margin: 23px 0 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.65;
+  }
+
+  .username-form {
+    padding: 30px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--pearl);
+    box-shadow: 0 20px 60px rgba(74, 58, 43, 0.08);
+  }
+
+  .username-form label,
+  .profile-editor label {
+    display: block;
+    margin-bottom: 11px;
     color: var(--ink-soft);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 650;
+  }
+
+  .username-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    min-height: 48px;
+    padding-left: 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 9px;
+    background: var(--pearl-raised);
+  }
+
+  .username-field > span {
+    color: var(--faint);
+    font-size: 14px;
+  }
+
+  .username-field input,
+  .profile-editor input {
+    min-width: 0;
+    border: 0;
+    color: var(--ink);
+    background: transparent;
+    outline: 0;
+  }
+
+  .username-field input {
+    height: 46px;
+    padding: 0 8px;
+  }
+
+  .username-field button,
+  .profile-editor button {
+    min-height: 38px;
+    margin-right: 5px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 7px;
+    color: var(--pearl-raised);
+    background: var(--ink);
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .username-field button:disabled,
+  .profile-editor button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .username-form small {
+    display: block;
+    margin-top: 12px;
+    color: var(--faint);
+    font-size: 10px;
+  }
+
+  .form-error {
+    margin: 12px 0 0;
+    color: var(--danger);
+    font-size: 11px;
+  }
+
+  .dashboard {
+    width: min(1180px, calc(100% - 56px));
+    margin: 0 auto;
+    padding: 38px 0 72px;
+  }
+
+  .profile-editor {
+    display: grid;
+    grid-template-columns: 160px minmax(0, 1fr);
+    align-items: center;
+    margin-bottom: 22px;
+    padding: 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--pearl);
+  }
+
+  .profile-editor label {
+    margin: 0;
+  }
+
+  .profile-editor > div {
+    display: flex;
+    gap: 8px;
+  }
+
+  .profile-editor input {
+    flex: 1;
+    min-height: 38px;
+    padding: 0 11px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: var(--pearl-raised);
+  }
+
+  .profile-editor .cancel {
+    color: var(--ink-soft);
+    border: 1px solid var(--line);
+    background: transparent;
+  }
+
+  .sync-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 22px;
+    padding: 11px 14px;
+    border: 1px solid rgba(169, 79, 66, 0.28);
+    border-radius: 8px;
+    color: var(--danger);
+    background: var(--coral-soft);
+    font-size: 11px;
+  }
+
+  .sync-error button {
+    border: 0;
+    color: inherit;
+    background: transparent;
+    font-size: 10px;
+    cursor: pointer;
+  }
+
+  .profile {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 20px;
+    align-items: center;
+    padding: 0 0 34px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .avatar {
+    display: grid;
+    width: 72px;
+    height: 72px;
+    place-items: center;
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    color: var(--coral-dark);
+    background: var(--pearl-raised);
+    font-family: var(--display);
+    font-size: 28px;
+  }
+
+  .avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .identity {
+    min-width: 0;
+  }
+
+  .profile-name {
+    display: flex;
+    gap: 9px;
+    align-items: center;
+    margin-top: 5px;
+  }
+
+  .identity h2 {
+    overflow: hidden;
+    font-size: 31px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .panel-tabs {
+  .profile-name > span {
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--pearl-raised);
+    background: var(--coral-dark);
+    font-size: 9px;
+    font-weight: 750;
+  }
+
+  .identity p {
+    margin: 5px 0 0;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .profile > a {
+    color: var(--ink-soft);
+    font-size: 11px;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .profile > a:hover {
+    color: var(--coral-dark);
+  }
+
+  .ratings {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 30px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--pearl);
+  }
+
+  .rating-card {
+    min-width: 0;
+    padding: 22px 24px 17px;
+  }
+
+  .rating-card + .rating-card {
+    border-left: 1px solid var(--line);
+  }
+
+  .rating-card > header {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+  }
+
+  .rating-card header > div:first-child {
+    display: grid;
+    gap: 1px;
+  }
+
+  .rating-card header span {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .rating-card header strong {
+    font-family: var(--display);
+    font-size: 37px;
+    font-variation-settings: "opsz" 42, "wght" 570;
+    line-height: 1.05;
+  }
+
+  .trend {
+    margin-top: 3px;
+    color: var(--faint);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .trend.positive { color: var(--sage); }
+  .trend.negative { color: var(--danger); }
+
+  .rating-card footer {
+    display: flex;
+    gap: 15px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 9px;
+  }
+
+  .rating-card footer strong {
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .rating-card footer .best {
+    margin-left: auto;
+    color: var(--faint);
+  }
+
+  .recent-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    margin: 44px 0 18px;
+  }
+
+  .recent-heading h2 {
+    margin-top: 4px;
+    font-size: 27px;
+  }
+
+  .recent-heading p {
+    max-width: 43ch;
+    margin: 0 0 3px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: right;
+  }
+
+  .history {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--pearl);
+    font-family: var(--interface);
+  }
+
+  .history-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 72px;
+    padding: 12px 16px 12px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .history-toolbar > div:first-child {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+  }
+
+  .history-toolbar h3 {
+    margin: 0;
+    font-family: var(--display);
+    font-size: 21px;
+    font-variation-settings: "opsz" 24, "wght" 590;
+  }
+
+  .history-toolbar > div:first-child > span {
+    color: var(--faint);
+    font-size: 10px;
+  }
+
+  .history-tabs {
     display: flex;
     gap: 3px;
     padding: 3px;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: 9px;
     background: var(--paper);
   }
 
-  .panel-tabs button {
-    min-height: 29px;
-    padding: 0 12px;
-    border: 0;
-    border-radius: 999px;
-    color: var(--muted);
-    background: transparent;
-    font-size: 11px;
-    font-weight: 650;
-    cursor: pointer;
-  }
-
-  .panel-tabs button.active {
-    color: var(--pearl-raised);
-    background: var(--ink);
-  }
-
-  .review-panel {
-    min-height: 0;
-    overflow: auto;
-    padding: 28px 24px 40px;
-    scrollbar-color: var(--line-strong) transparent;
-  }
-
-  .review-lead {
-    padding-bottom: 25px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .review-lead > span {
-    color: var(--coral-dark);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .review-lead > div {
+  .history-tabs button {
     display: flex;
-    gap: 10px;
-    align-items: baseline;
-    margin-top: 6px;
-  }
-
-  .review-lead h2 {
-    margin: 0;
-    color: var(--ink);
-    font-family: var(--display);
-    font-size: clamp(24px, 2vw, 31px);
-    font-variation-settings: "opsz" 32, "wght" 580;
-    line-height: 1.1;
-  }
-
-  .review-lead p {
-    max-width: 34ch;
-    margin: 13px 0 0;
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1.55;
-  }
-
-  .review-lead p strong {
-    color: var(--ink);
-  }
-
-  .classification-text {
-    color: var(--sage);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: capitalize;
-  }
-
-  .classification-text.inaccuracy {
-    color: var(--ochre);
-  }
-
-  .classification-text.mistake,
-  .classification-text.miss,
-  .classification-text.blunder {
-    color: var(--coral-dark);
-  }
-
-  .opening-band,
-  .best-alternative {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 11px;
+    gap: 7px;
     align-items: center;
-    min-height: 66px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--line);
-    background: transparent;
-  }
-
-  .opening-band > div,
-  .best-alternative > div {
-    display: grid;
-    min-width: 0;
-    gap: 2px;
-  }
-
-  .opening-band div span,
-  .best-alternative div span {
+    min-height: 31px;
+    padding: 0 11px;
+    border: 0;
+    border-radius: 6px;
     color: var(--muted);
-    font-size: 10px;
+    background: transparent;
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-
-  .opening-band strong,
-  .best-alternative strong {
-    overflow: hidden;
-    color: var(--ink);
-    font-size: 13px;
-    font-weight: 650;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .opening-band small {
-    color: var(--faint);
-    font-size: 9px;
-    white-space: nowrap;
-  }
-
-  .opening-band.error {
-    grid-template-columns: minmax(0, 1fr);
-    color: var(--danger);
-    background: transparent;
-  }
-
-  .best-alternative {
-    grid-template-columns: auto minmax(0, 1fr);
-    margin-top: 18px;
-    padding: 14px;
-    border: 0;
-    border-radius: 10px;
-    background: var(--coral-soft);
-  }
-
-  .best-alternative div span {
-    color: var(--coral-dark);
-  }
-
-  .suggestion-arrow {
-    display: grid;
-    width: 28px;
-    height: 28px;
-    place-items: center;
-    border: 1px solid rgba(159, 78, 59, 0.25);
-    border-radius: 50%;
-    color: var(--coral-dark);
-    background: transparent;
-    font-size: 16px;
-  }
-
-  .engine-notice {
-    display: grid;
-    min-height: 92px;
-    place-content: center;
-    gap: 4px;
-    padding: 18px 0;
-    border-bottom: 1px solid var(--line);
-    color: var(--muted);
-    font-size: 12px;
-    text-align: center;
-  }
-
-  .engine-notice small {
-    color: var(--faint);
-  }
-
-  .engine-notice.error {
-    color: var(--danger);
-  }
-
-  .engine-notice.calculating {
-    display: flex;
-    align-items: center;
-  }
-
-  .engine-notice.calculating span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--coral);
-    animation: pulse 700ms infinite alternate;
-  }
-
-  .review-refresh {
-    margin-top: 18px;
-    padding: 8px 10px;
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    color: var(--muted);
-    background: var(--paper);
-    font-size: 10px;
-    text-align: center;
-  }
-
-  .engine-lines {
-    margin-top: 22px;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-
-  .engine-lines summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 48px;
-    color: var(--ink-soft);
-    font-size: 12px;
-    font-weight: 650;
     cursor: pointer;
-    list-style: none;
   }
 
-  .engine-lines summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .engine-lines summary::after {
-    content: "+";
-    color: var(--coral-dark);
-    font-size: 18px;
-    font-weight: 400;
-  }
-
-  .engine-lines[open] summary::after {
-    content: "−";
-  }
-
-  .engine-lines summary span {
-    margin-left: auto;
-    margin-right: 10px;
+  .history-tabs button span {
     color: var(--faint);
     font-size: 10px;
-    font-weight: 500;
-  }
-
-  .lines {
-    display: grid;
-    gap: 0;
-    padding: 0 0 8px;
-    border: 0;
-  }
-
-  .line {
-    display: grid;
-    grid-template-columns: 44px minmax(0, 1fr);
-    gap: 9px;
-    align-items: start;
-    min-height: 0;
-    padding: 10px 0;
-    border-top: 1px solid var(--line);
-    border-radius: 0;
-    color: var(--ink-soft);
-    background: transparent;
-    font-size: 11px;
-  }
-
-  .line .score {
-    color: var(--ink);
-    font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
 
-  .line .score.mate {
-    color: var(--coral-dark);
+  .history-tabs button.active {
+    color: var(--pearl-raised);
+    background: var(--sage);
   }
 
-  .line p {
-    margin: 0;
-    overflow: hidden;
-    line-height: 1.45;
-    text-overflow: ellipsis;
-    white-space: normal;
+  .history-tabs button.active span {
+    color: rgba(255, 255, 255, 0.72);
   }
 
-  .line small {
-    grid-column: 2;
+  .blitz-history .history-tabs button.active {
+    background: var(--ochre);
+  }
+
+  .history-header,
+  .history-row {
+    display: grid;
+    grid-template-columns: 86px minmax(220px, 1fr) 82px 92px 58px 106px 86px;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .history-header {
+    min-height: 34px;
+    padding: 0 18px;
+    color: var(--faint);
+    background: rgba(223, 216, 204, 0.18);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  .history-list {
+    display: grid;
+  }
+
+  .history-row {
+    width: 100%;
+    min-height: 82px;
+    padding: 8px 18px;
+    border: 0;
+    border-top: 1px solid var(--line);
+    color: var(--ink);
+    background: transparent;
+    text-align: left;
+    line-height: 1.25;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+
+  .history-row:first-child {
+    border-top: 0;
+  }
+
+  .history-row:hover:not(:disabled) {
+    background: rgba(255, 253, 248, 0.82);
+  }
+
+  .history-row:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 2px solid var(--coral);
+    outline-offset: -2px;
+  }
+
+  .history-row:disabled {
+    cursor: wait;
+  }
+
+  .history-time {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--sage);
+  }
+
+  .blitz-history .history-time {
+    color: var(--ochre);
+  }
+
+  .history-time > svg {
+    width: 21px;
+    height: 21px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
+  }
+
+  .history-time > span {
+    display: grid;
+    gap: 2px;
+  }
+
+  .history-time strong {
+    color: var(--ink-soft);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .history-time small {
+    display: none;
     color: var(--faint);
     font-size: 9px;
-    text-align: left;
+    white-space: nowrap;
   }
 
-  .modal-backdrop {
-    position: fixed;
-    z-index: 20;
-    inset: 0;
+  .history-players {
     display: grid;
-    place-items: center;
-    padding: 20px;
-    background: rgba(55, 47, 40, 0.42);
-    backdrop-filter: blur(5px);
+    min-width: 0;
+    gap: 4px;
   }
 
-  .modal {
-    width: min(580px, 100%);
-    padding: 24px;
-    border: 1px solid var(--line-strong);
-    border-radius: 14px;
-    color: var(--ink);
-    background: var(--pearl-raised);
-    box-shadow: 0 30px 90px rgba(69, 54, 43, 0.18);
-  }
-
-  .meta-label {
-    display: block;
-    margin-bottom: 3px;
-    color: var(--coral-dark);
-    font-size: 9px;
-    letter-spacing: 0.1em;
-  }
-
-  .modal h2 {
-    margin: 0;
-    color: var(--ink);
-    font-family: var(--display);
-    font-size: 27px;
-    font-variation-settings: "opsz" 30, "wght" 580;
-  }
-
-  .modal-head button {
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    color: var(--ink-soft);
-    background: var(--paper);
-    font-size: 20px;
-    cursor: pointer;
-  }
-
-  .modal-head {
+  .history-players > span {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-  }
-
-  .modal > p {
-    margin: 12px 0;
+    gap: 7px;
+    align-items: center;
+    min-width: 0;
     color: var(--muted);
-    font-size: 13px;
-    line-height: 1.55;
   }
 
-  .modal textarea {
-    width: 100%;
-    resize: vertical;
-    padding: 12px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    outline: 0;
-    border-color: var(--line);
-    color: var(--ink);
-    background: var(--pearl);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  .history-players strong {
+    min-width: 0;
+    max-width: 30ch;
+    overflow: hidden;
     font-size: 12px;
-    line-height: 1.55;
+    font-weight: 580;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .modal textarea:focus {
-    border-color: var(--coral);
-  }
-
-  .modal-actions button {
-    padding: 9px 13px;
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    border-color: var(--line-strong);
+  .history-players em {
+    color: var(--faint);
     font-size: 11px;
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .history-players > span.current-player strong {
+    color: var(--ink);
     font-weight: 700;
-    cursor: pointer;
   }
 
-  .modal-actions {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 12px;
+  .history-players > span > small {
+    color: var(--sage);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
-  .modal-actions .secondary {
+  .player-avatar {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    flex: 0 0 26px;
+    overflow: hidden;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    color: var(--muted);
+    background: var(--pearl-raised);
+    font-family: var(--display);
+    font-size: 11px;
+    font-style: normal;
+  }
+
+  .player-avatar.black-avatar {
+    color: var(--paper);
+    border-color: var(--ink-soft);
+    background: var(--ink-soft);
+  }
+
+  .player-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .piece-color {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border: 1px solid var(--line-strong);
+    border-radius: 1px;
+    background: var(--pearl-raised);
+  }
+
+  .piece-color.black {
+    border-color: var(--ink-soft);
+    background: var(--ink-soft);
+  }
+
+  .history-result {
+    display: grid;
+    justify-items: start;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .history-result > strong {
+    min-width: 44px;
+    padding: 4px 8px;
+    border-radius: 999px;
     color: var(--ink-soft);
-    background: transparent;
+    background: var(--sage-soft);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-align: center;
   }
 
-  .modal-actions .primary {
-    color: var(--pearl-raised);
-    border-color: var(--ink);
-    background: var(--ink);
+  .history-result > strong.win {
+    color: #fff;
+    background: var(--sage);
   }
 
-  .import-error {
-    margin-top: 8px;
-    color: var(--danger);
+  .history-result > strong.loss {
+    color: var(--coral-dark);
+    background: var(--coral-soft);
+  }
+
+  .history-result > small {
+    padding-left: 8px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .history-accuracy {
+    display: grid;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .history-moves,
+  .history-date {
+    color: var(--muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .review-status {
+    display: grid;
+    min-height: 32px;
+    padding: 0 9px;
+    place-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    color: var(--coral-dark);
+    background: var(--pearl-raised);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  .review-status.reviewed {
+    color: var(--sage);
+    background: var(--sage-soft);
+  }
+
+  .empty-games {
+    display: grid;
+    min-height: 180px;
+    place-items: center;
+    color: var(--faint);
     font-size: 11px;
   }
 
-  .modal-actions button:disabled {
-    cursor: not-allowed;
-    opacity: 0.4;
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
-  @keyframes pulse {
-    to {
-      opacity: 0.35;
-    }
-  }
-
-  @media (max-width: 1180px) {
-    .workspace {
-      grid-template-columns: 220px minmax(440px, 1fr) 340px;
+  @media (max-width: 940px) {
+    .onboarding {
+      grid-template-columns: 1fr;
+      gap: 42px;
+      align-content: center;
+      width: min(640px, calc(100% - 40px));
     }
 
-    .study-column {
-      --board-size: min(620px, calc(100vh - 270px), calc(100vw - 680px));
-      padding-inline: 14px;
+    .onboarding-copy h2 {
+      max-width: 14ch;
     }
 
-  }
-
-  @media (max-width: 1100px) {
-    .app-shell {
-      grid-template-rows: 68px minmax(0, 1fr);
+    .dashboard {
+      width: min(760px, calc(100% - 40px));
     }
 
-    main {
-      overflow: auto;
+    .ratings {
+      grid-template-columns: 1fr;
     }
 
-    .workspace {
-      grid-template-columns: minmax(0, 1fr);
-      height: auto;
-      overflow: visible;
-    }
-
-    .study-column {
-      --board-size: min(640px, calc(100vw - 90px), calc(100vh - 235px));
-      order: 1;
-      min-height: calc(100vh - 68px);
-      overflow: visible;
-    }
-
-    .summary-column {
-      order: 2;
-      overflow: visible;
-    }
-
-    .study-panel {
-      order: 3;
-      min-height: 680px;
+    .rating-card + .rating-card {
       border-top: 1px solid var(--line);
       border-left: 0;
     }
 
-    .review-panel {
-      padding-inline: max(24px, calc((100vw - 640px) / 2));
+    .history-header,
+    .history-row {
+      grid-template-columns: 76px minmax(180px, 1fr) 76px 96px 82px;
+      gap: 10px;
+    }
+
+    .accuracy-column,
+    .moves-column {
+      display: none;
     }
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 680px) {
     .app-shell {
       grid-template-rows: 62px minmax(0, 1fr);
     }
 
-    .engine-chip {
+    .top-actions .quiet-action {
       display: none;
     }
 
-    .top-actions > button {
-      min-height: 32px;
-      padding-inline: 11px;
-      font-size: 11px;
+    .refresh-action {
+      width: 36px;
+      justify-content: center;
+      padding: 0;
+      font-size: 0;
     }
 
-    .study-column {
-      --board-size: min(calc(100vw - 62px), calc(100vh - 245px));
-      min-height: calc(100vh - 62px);
-      padding: 12px 6px 16px;
+    .profile {
+      grid-template-columns: auto minmax(0, 1fr);
     }
 
-    .board-stage {
-      grid-template-columns: 24px var(--board-size) 28px;
-      column-gap: 5px;
+    .profile > a {
+      grid-column: 2;
     }
 
-    .board-tools button {
-      width: 28px;
-      height: 28px;
-    }
-
-    .board-footer {
-      min-height: 52px;
-    }
-
-    .position-summary > span:first-child {
-      display: none;
-    }
-
-    .navigation button:first-child,
-    .navigation button:last-child {
-      display: none;
-    }
-
-    .move-timeline {
+    .profile-editor {
       grid-template-columns: 1fr;
-      gap: 0;
-      padding-top: 5px;
+      gap: 10px;
     }
 
-    .timeline-label {
+    .recent-heading {
+      display: block;
+    }
+
+    .recent-heading p {
+      margin-top: 8px;
+      text-align: left;
+    }
+
+    .history-toolbar {
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .history-toolbar > div:first-child {
+      display: grid;
+      gap: 2px;
+    }
+
+    .history-header {
       display: none;
     }
 
-    .panel-header {
-      padding-inline: 14px;
+    .history-row {
+      grid-template-areas:
+        "time players result"
+        "time players review";
+      grid-template-columns: 72px minmax(0, 1fr) 72px;
+      grid-template-rows: 1fr 1fr;
+      min-height: 92px;
+      padding: 10px 12px;
     }
 
-    .review-panel {
-      padding: 24px 18px 36px;
+    .history-time { grid-area: time; }
+    .history-players { grid-area: players; }
+    .history-result { grid-area: result; align-self: end; }
+    .review-status { grid-area: review; align-self: start; }
+
+    .history-time small {
+      display: block;
+    }
+
+    .date-column {
+      display: none;
+    }
+
+    .history-players > span > small {
+      display: none;
+    }
+
+    .history-result > strong {
+      min-width: 42px;
+    }
+
+    .review-status {
+      min-height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    .review-status.reviewed {
+      background: transparent;
+    }
+
+    .username-field {
+      grid-template-columns: auto minmax(0, 1fr);
+      padding-right: 5px;
+    }
+
+    .username-field button {
+      grid-column: 1 / -1;
+      width: calc(100% - 5px);
+      margin-bottom: 5px;
     }
   }
 </style>

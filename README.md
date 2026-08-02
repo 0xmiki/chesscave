@@ -10,6 +10,8 @@ The first milestone includes:
 - Neo board-piece artwork with identity-preserving move animation;
 - PGN import, move navigation, local study restoration, and orientation-aware
   player strips with ratings and timeline-synchronized clocks;
+- a saved-username Chess.com home dashboard with public profile data, Rapid and
+  Blitz rating progress, recent games, explicit refresh, and one-click study;
 - offline ECO opening recognition from 3,807 pinned Lichess positions;
 - one-pass, whole-game Stockfish reviews persisted to the desktop data folder;
 - instant per-ply evaluation, WDL, expected-points classification, and MultiPV
@@ -62,6 +64,20 @@ arrow unless the played move was already best.
 Right-drag on the board to draw a yellow analysis arrow. Hold Shift for green,
 Ctrl for red, or Alt for blue. Right-click a single square to highlight it;
 left-clicking or changing position clears personal annotations.
+
+## Chess.com profile data
+
+The home dashboard uses Chess.com's read-only
+[Published Data API](https://support.chess.com/en/articles/9650547-what-is-the-pubapi-and-how-do-i-use-it).
+The Tauri host requests the selected public player profile, ratings, archive
+list, and up to four recent monthly archives serially with an identifying user
+agent. ChessCave stores the chosen username and latest dashboard snapshot in the
+local webview only. Refresh requests current public data; Chess.com's own API
+responses may remain cached for up to twelve hours.
+
+Opening a dashboard game saves its PGN as the active local study and starts the
+existing review flow. The review itself remains content-addressed in the desktop
+data directory, so revisiting the same game reuses its saved Stockfish result.
 
 ## Opening data
 
