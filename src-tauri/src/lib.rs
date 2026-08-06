@@ -13,6 +13,7 @@ pub fn run() {
             engine::analyze_position,
             engine::review_game,
             chess_com::chess_com_dashboard,
+            chess_com::chess_com_rapid_since,
             notes::notes_bootstrap,
             notes::notes_load_sidebar,
             notes::notes_load_page,

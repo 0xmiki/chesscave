@@ -223,6 +223,48 @@ fn select_recent_games(games: Vec<ChessComGame>, limit: usize) -> Vec<ChessComGa
     rapid
 }
 
+fn select_rapid_since(games: Vec<ChessComGame>, since: u64) -> Vec<ChessComGame> {
+    let mut rapid = games
+        .into_iter()
+        .filter(|game| {
+            game.rules == "chess"
+                && game.time_class == "rapid"
+                && !game.pgn.is_empty()
+                && game.end_time >= since
+        })
+        .collect::<Vec<_>>();
+    rapid.sort_by(|left, right| right.end_time.cmp(&left.end_time));
+    rapid
+}
+
+#[tauri::command]
+pub async fn chess_com_rapid_since(
+    username: String,
+    since: u64,
+) -> Result<Vec<ChessComGame>, String> {
+    let username = normalize_username(&username)?;
+    let client = api_client()?;
+    let profile_url = format!("{API_ROOT}/{username}");
+    let archives_url = format!("{profile_url}/games/archives");
+    let archives =
+        fetch_json::<ChessComArchives>(&client, &archives_url, "the game archive").await?;
+    let trusted_archive_prefix = format!("{profile_url}/games/");
+    let mut games = Vec::new();
+
+    // Four archives safely covers a trailing seven-day window around month and
+    // year boundaries without turning this into a broad history sync.
+    for archive_url in archives.archives.iter().rev().take(MAX_ARCHIVES) {
+        if !archive_url.starts_with(&trusted_archive_prefix) {
+            continue;
+        }
+        let archive =
+            fetch_json::<ChessComGamesResponse>(&client, archive_url, "weekly Rapid games").await?;
+        games.extend(archive.games);
+    }
+
+    Ok(select_rapid_since(games, since))
+}
+
 #[tauri::command]
 pub async fn chess_com_dashboard(username: String) -> Result<ChessComDashboard, String> {
     let username = normalize_username(&username)?;
@@ -282,7 +324,7 @@ pub async fn chess_com_dashboard(username: String) -> Result<ChessComDashboard, 
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_username, select_recent_games, ChessComGame};
+    use super::{normalize_username, select_rapid_since, select_recent_games, ChessComGame};
 
     fn game(time_class: &str, end_time: u64, rules: &str, pgn: &str) -> ChessComGame {
         ChessComGame {
@@ -321,5 +363,22 @@ mod tests {
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].pgn, "blitz-new");
         assert_eq!(selected[1].pgn, "rapid-new");
+    }
+
+    #[test]
+    fn keeps_every_rapid_game_inside_the_requested_window() {
+        let selected = select_rapid_since(
+            vec![
+                game("rapid", 300, "chess", "newest"),
+                game("rapid", 200, "chess", "inside"),
+                game("rapid", 99, "chess", "old"),
+                game("blitz", 250, "chess", "wrong-class"),
+            ],
+            100,
+        );
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].pgn, "newest");
+        assert_eq!(selected[1].pgn, "inside");
     }
 }

@@ -7,7 +7,7 @@ import type {
   GameReview,
   ReviewProgress,
 } from "$lib/chess/types";
-import type { ChessComDashboard } from "$lib/chess/chesscom";
+import type { ChessComDashboard, ChessComGame } from "$lib/chess/chesscom";
 
 export function hasNativeHost(): boolean {
   return isTauri();
@@ -32,6 +32,16 @@ export async function getChessComDashboard(
     throw new Error("Chess.com sync is available in the ChessCave desktop app.");
   }
   return invoke<ChessComDashboard>("chess_com_dashboard", { username });
+}
+
+export async function getChessComRapidSince(
+  username: string,
+  since: number,
+): Promise<ChessComGame[]> {
+  if (!isTauri()) {
+    throw new Error("Chess.com sync is available in the ChessCave desktop app.");
+  }
+  return invoke<ChessComGame[]>("chess_com_rapid_since", { username, since });
 }
 
 export async function analyzePosition(

@@ -8,7 +8,7 @@
     subtitle = "",
     actions,
   }: {
-    active: "home" | "study" | "notes";
+    active: "home" | "study" | "practice" | "notes";
     title: string;
     subtitle?: string;
     actions?: Snippet;
@@ -26,6 +26,7 @@
   <nav aria-label="Primary navigation">
     <a class:active={active === "home"} href="/">Home</a>
     <a class:active={active === "study"} href="/study">Study</a>
+    <a class:active={active === "practice"} href="/practice">Practice</a>
     <a class:active={active === "notes"} href="/notes">Notes</a>
   </nav>
 
@@ -88,7 +89,7 @@
   }
 
   nav a {
-    min-width: 58px;
+    min-width: 54px;
     padding: 6px 11px;
     border-radius: 999px;
     color: var(--muted);

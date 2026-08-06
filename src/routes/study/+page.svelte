@@ -20,7 +20,15 @@
     variationPositionLabel,
   } from "$lib/chess/game";
   import { bestAlternativeArrow } from "$lib/chess/arrows";
-  import { markGameReviewed, STUDY_STORAGE_KEY } from "$lib/chess/chesscom";
+  import {
+    CHESSCOM_USERNAME_STORAGE_KEY,
+    markGameReviewed,
+    STUDY_STORAGE_KEY,
+  } from "$lib/chess/chesscom";
+  import {
+    findConversionExercises,
+    sideForUsername,
+  } from "$lib/chess/conversion";
   import { buildReviewPresentation } from "$lib/chess/review";
   import {
     deepestOpeningPly,
@@ -89,6 +97,7 @@
   let storageReady = $state(false);
   let openingBook = $state<OpeningBook | null>(null);
   let openingError = $state("");
+  let playerUsername = $state("");
 
   const exploring = $derived(variation !== null && variationPly !== null);
   const snapshot = $derived(
@@ -214,6 +223,12 @@
   const activeSide = $derived<Side>(
     snapshot.fen.split(/\s+/)[1] === "b" ? "b" : "w",
   );
+  const conversionSide = $derived(sideForUsername(game, playerUsername));
+  const conversionExercises = $derived(
+    review && conversionSide
+      ? findConversionExercises(game, review, conversionSide)
+      : [],
+  );
 
   $effect(() => {
     if (!storageReady || typeof localStorage === "undefined") return;
@@ -266,6 +281,8 @@
         localStorage.removeItem("chesscave.coach-messages.v1");
       }
       storageReady = true;
+      playerUsername =
+        localStorage.getItem(CHESSCOM_USERNAME_STORAGE_KEY) ?? "";
 
       void loadOpeningBook()
         .then((book) => {
@@ -826,6 +843,9 @@
       {:else if review}
         <span class="engine-chip"><i></i>Review ready</span>
       {/if}
+      {#if conversionExercises.length}
+        <a class="practice-action" href="/practice/conversion">Practice this lead</a>
+      {/if}
       <button type="button" onclick={() => { pgnDraft = ""; importOpen = true; }}>Import game</button>
     </div>
   {/snippet}
@@ -1168,6 +1188,17 @@
   .top-actions > button:hover {
     border-color: var(--coral-dark);
     background: var(--coral-dark);
+  }
+
+  .practice-action {
+    padding: 8px 12px;
+    border: 1px solid #d7a28f;
+    border-radius: 999px;
+    color: var(--coral-dark);
+    background: var(--coral-soft);
+    font-size: 11px;
+    font-weight: 680;
+    text-decoration: none;
   }
 
   .engine-chip {
