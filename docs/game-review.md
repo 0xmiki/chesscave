@@ -5,7 +5,7 @@ Importing or branching a game creates one immutable sequence of positions. The
 desktop host analyzes that sequence once and saves the complete result under:
 
 ```text
-app-local-data/reviews/v4/<sha256>.json
+app-local-data/reviews/v5/<sha256>.json
 ```
 
 The key covers the ordered FEN/played-move sequence, schema version, Stockfish
@@ -78,25 +78,29 @@ depth or time budget.
 
 ## Accuracy and classifications
 
-ChessCave v4 maps Stockfish centipawn evaluations onto Lichess's published
-winning-chance curve, then maps the winning-chance loss of each move onto
-Lichess move accuracy. Whole-game accuracy is the mean of a
-volatility-weighted mean and a harmonic mean, using the same bounded sliding
-window weights as Lichess. This makes the displayed score reproducible and
-keeps errors in already-decided positions from dominating the review.
+ChessCave v5 follows Chesskit's evaluation pipeline. Stockfish centipawn
+evaluations are mapped onto Lichess's published winning-chance curve, then the
+winning-chance loss of each move is mapped onto Lichess move accuracy.
+Whole-game accuracy is the mean of a volatility-weighted mean and a harmonic
+mean. The harmonic input is floored at 10, and the volatility weights use
+Chesskit's bounded centered windows. This makes the displayed score
+reproducible and keeps errors in already-decided positions from dominating the
+review.
 
-Lichess's normalized winning-chance-loss thresholds correspond to 5, 10, and
-15 points on the public 0–100 Win% scale:
+Chesskit's ordinary move labels use strict loss boundaries on the public
+0–100 Win% scale:
 
 | Classification | Win% lost |
 | --- | ---: |
-| Inaccuracy | 5–10 |
-| Mistake | 10–15 |
-| Blunder | 15+ |
+| Excellent | 0–2 |
+| Good | >2–5 |
+| Inaccuracy | >5–10 |
+| Mistake | >10–20 |
+| Blunder | >20 |
 
 ChessCave supplies the positive vocabulary needed by its study interface. An
-exact Stockfish choice is `best`; a non-best move losing at most one Win% point
-is `excellent`, and one losing fewer than five is `good`. A best move becomes
+exact Stockfish choice is `best`; a non-best move losing at most two Win% points
+is `excellent`, and one losing at most five is `good`. A best move becomes
 `great` when the second candidate loses at least ten Win% points and the player
 was not already overwhelmingly winning.
 
@@ -131,6 +135,9 @@ accuracy machinery.
 
 Published model and source attribution:
 
+- <https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/winPercentage.ts>
+- <https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/accuracy.ts>
+- <https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/moveClassification.ts>
 - <https://lichess.org/page/accuracy>
 - <https://github.com/lichess-org/lila/blob/master/modules/analyse/src/main/AccuracyPercent.scala>
 - <https://github.com/lichess-org/lila/blob/master/modules/tree/src/main/Advice.scala>

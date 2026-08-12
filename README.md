@@ -92,9 +92,17 @@ for the pinned revision and regeneration command.
 
 ## Review-metric attribution
 
-ChessCave's winning-chance curve, move-accuracy curve, volatility-weighted and
-harmonic game-accuracy aggregation, serious-error thresholds, and board-state
-phase division are derived from Lichess's published analysis model:
+ChessCave's review metric follows Chesskit's Chess.com-like labeling pipeline:
+Stockfish evaluations feed Lichess's published winning-chance and move-accuracy
+curves, while Chesskit's aggregation details and ordinary label boundaries are
+preserved. ChessCave independently implements the formulas in Rust and
+TypeScript and retains its own special-move detection.
+
+- [Chesskit win percentage](https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/winPercentage.ts)
+- [Chesskit accuracy](https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/accuracy.ts)
+- [Chesskit move classification](https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/moveClassification.ts)
+
+The underlying public analysis model and phase division come from Lichess:
 
 - [Lichess Accuracy metric](https://lichess.org/page/accuracy)
 - [`AccuracyPercent.scala`](https://github.com/lichess-org/lila/blob/master/modules/analyse/src/main/AccuracyPercent.scala)

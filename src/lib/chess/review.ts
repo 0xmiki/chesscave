@@ -92,15 +92,19 @@ function standardDeviation(values: number[]): number {
 
 function volatilityWeights(winPercents: number[]): number[] {
   if (winPercents.length < 2) return [];
-  const moveCount = winPercents.length - 1;
-  const windowSize = Math.min(clamp(Math.floor(moveCount / 10), 2, 8), winPercents.length);
+  const windowSize = Math.min(
+    clamp(Math.ceil(winPercents.length / 10), 2, 8),
+    winPercents.length,
+  );
+  const halfWindowSize = Math.round(windowSize / 2);
   const windows: number[][] = [];
 
-  for (let index = 0; index < Math.max(0, windowSize - 2); index += 1) {
-    windows.push(winPercents.slice(0, windowSize));
-  }
-  for (let start = 0; start <= winPercents.length - windowSize; start += 1) {
-    windows.push(winPercents.slice(start, start + windowSize));
+  for (let index = 1; index < winPercents.length; index += 1) {
+    const start = index - halfWindowSize;
+    const end = index + halfWindowSize;
+    if (start < 0) windows.push(winPercents.slice(0, windowSize));
+    else if (end > winPercents.length) windows.push(winPercents.slice(-windowSize));
+    else windows.push(winPercents.slice(start, end));
   }
 
   return windows.map((window) => clamp(standardDeviation(window), 0.5, 12));
@@ -123,10 +127,9 @@ function aggregateAccuracy(
   const weightedMean =
     weighted.reduce((sum, item) => sum + item.accuracy * item.weight, 0) /
     Math.max(Number.EPSILON, weightTotal);
-  const harmonicMean = weighted.some((item) => item.accuracy <= 0)
-    ? 0
-    : weighted.length /
-      weighted.reduce((sum, item) => sum + 1 / item.accuracy, 0);
+  const harmonicMean =
+    weighted.length /
+    weighted.reduce((sum, item) => sum + 1 / Math.max(item.accuracy, 10), 0);
   return Math.round(((weightedMean + harmonicMean) / 2) * 10) / 10;
 }
 

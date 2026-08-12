@@ -15,7 +15,7 @@ use tokio::{
     time::{timeout, Duration},
 };
 
-pub(crate) const REVIEW_SCHEMA_VERSION: u8 = 4;
+pub(crate) const REVIEW_SCHEMA_VERSION: u8 = 5;
 const DEFAULT_REVIEW_NODES: u64 = 60_000;
 const SHALLOW_REVIEW_DEPTH: u16 = 10;
 const SACRIFICE_PV_PLIES: usize = 4;
@@ -1088,21 +1088,24 @@ fn classify_move(
         return "best".to_string();
     }
 
-    // Lichess identifies serious errors from changes in normalized winning
-    // chances. On the public 0–100 Win% scale, its 0.10/0.20/0.30 thresholds
-    // correspond to losses of 5/10/15 percentage points.
-    if win_percent_lost >= 15.0 {
+    // Chesskit applies Chess.com-like labels to the public Lichess Win% curve.
+    // Boundary values stay in the better category (for example, exactly 10 is
+    // an inaccuracy); this deliberately mirrors Chesskit's strict comparisons.
+    basic_classification(win_percent_lost).to_string()
+}
+
+fn basic_classification(win_percent_lost: f64) -> &'static str {
+    if win_percent_lost > 20.0 {
         "blunder"
-    } else if win_percent_lost >= 10.0 {
+    } else if win_percent_lost > 10.0 {
         "mistake"
-    } else if win_percent_lost >= 5.0 {
+    } else if win_percent_lost > 5.0 {
         "inaccuracy"
-    } else if win_percent_lost <= 1.0 {
+    } else if win_percent_lost <= 2.0 {
         "excellent"
     } else {
         "good"
     }
-    .to_string()
 }
 
 fn build_move_reviews(positions: &[PositionReview], inputs: &[ReviewMoveInput]) -> Vec<MoveReview> {
@@ -1177,15 +1180,14 @@ fn game_accuracy(moves: &[&MoveReview], weights: &[f64]) -> f64 {
         })
         .sum::<f64>()
         / weighted_denominator.max(f64::EPSILON);
-    let harmonic = if moves.iter().any(|item| item.estimated_accuracy <= 0.0) {
-        0.0
-    } else {
-        moves.len() as f64
-            / moves
-                .iter()
-                .map(|item| 1.0 / item.estimated_accuracy)
-                .sum::<f64>()
-    };
+    // Chesskit floors only the harmonic-mean inputs at 10. A single zero-
+    // accuracy move should lower a game score substantially, not collapse the
+    // harmonic half of the score all the way to zero.
+    let harmonic = moves.len() as f64
+        / moves
+            .iter()
+            .map(|item| 1.0 / item.estimated_accuracy.max(10.0))
+            .sum::<f64>();
     (weighted + harmonic) / 2.0
 }
 
@@ -1194,15 +1196,24 @@ fn volatility_weights(positions: &[PositionReview]) -> Vec<f64> {
         return Vec::new();
     }
     let percents = positions.iter().map(win_percent_white).collect::<Vec<_>>();
-    let window_size = ((positions.len() - 1) / 10)
+    let window_size = positions
+        .len()
+        .div_ceil(10)
         .clamp(2, 8)
         .min(positions.len());
+    let half_window_size = window_size.div_ceil(2);
     let mut windows = Vec::with_capacity(positions.len() - 1);
-    for _ in 0..window_size.saturating_sub(2) {
-        windows.push(&percents[0..window_size]);
-    }
-    for start in 0..=percents.len() - window_size {
-        windows.push(&percents[start..start + window_size]);
+    for index in 1..positions.len() {
+        if index < half_window_size {
+            windows.push(&percents[..window_size]);
+            continue;
+        }
+        let end = index + half_window_size;
+        if end > positions.len() {
+            windows.push(&percents[positions.len() - window_size..]);
+            continue;
+        }
+        windows.push(&percents[index - half_window_size..end]);
     }
     windows
         .into_iter()
@@ -1363,7 +1374,7 @@ pub async fn review_game(
         multi_pv,
         created_at_ms,
         cached: false,
-        model: "stockfish + lichess-win-percent-accuracy + chesscave-special-moves-v2".to_string(),
+        model: "stockfish + chesskit-lichess-accuracy + chesscave-special-moves-v2".to_string(),
         positions: analyzed,
         moves: move_reviews,
         summary,
@@ -1376,8 +1387,9 @@ pub async fn review_game(
 #[cfg(test)]
 mod tests {
     use super::{
-        brilliant_loss_limit, build_move_reviews, parse_info, shallow_search_surprise,
-        square_index, BoardState, EngineLine, PositionReview, ReviewClocks, ReviewMoveInput,
+        basic_classification, brilliant_loss_limit, build_move_reviews, game_accuracy, parse_info,
+        shallow_search_surprise, square_index, BoardState, EngineLine, MoveReview, PositionReview,
+        ReviewClocks, ReviewMoveInput,
     };
 
     fn engine_line(multipv: u8, score_cp: i32, moves: &[&str]) -> EngineLine {
@@ -1441,6 +1453,38 @@ mod tests {
         .expect("analysis line");
 
         assert_eq!(line.wdl, Some([60, 300, 640]));
+    }
+
+    #[test]
+    fn uses_chesskit_strict_classification_boundaries() {
+        assert_eq!(basic_classification(2.0), "excellent");
+        assert_eq!(basic_classification(2.01), "good");
+        assert_eq!(basic_classification(5.0), "good");
+        assert_eq!(basic_classification(5.01), "inaccuracy");
+        assert_eq!(basic_classification(10.0), "inaccuracy");
+        assert_eq!(basic_classification(10.01), "mistake");
+        assert_eq!(basic_classification(20.0), "mistake");
+        assert_eq!(basic_classification(20.01), "blunder");
+    }
+
+    #[test]
+    fn floors_chesskit_harmonic_accuracy_inputs_at_ten() {
+        let move_with_accuracy = |ply, accuracy| MoveReview {
+            ply,
+            san: String::new(),
+            uci: String::new(),
+            color: "w".to_string(),
+            classification: String::new(),
+            expected_points_before: 0.0,
+            expected_points_after: 0.0,
+            expected_points_lost: 0.0,
+            estimated_accuracy: accuracy,
+            best_move: None,
+        };
+        let moves = vec![move_with_accuracy(1, 0.0), move_with_accuracy(2, 100.0)];
+        let selected = moves.iter().collect::<Vec<_>>();
+
+        assert!((game_accuracy(&selected, &[1.0, 1.0]) - 34.090_909).abs() < 0.000_001);
     }
 
     #[test]
