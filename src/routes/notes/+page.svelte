@@ -1181,6 +1181,10 @@
     focusRequest = { ...selection, token: focusToken };
   }
 
+  function handleFocusRequest(token: number) {
+    if (focusRequest?.token === token) focusRequest = null;
+  }
+
   function focusFirstParagraph() {
     const current = pageChunk;
     if (!current) return;
@@ -1296,6 +1300,7 @@
       : undefined}
     onCommandKeydown={handleCommandMenuKeydown}
     onTurnInto={openTurnIntoMenu}
+    onFocusRequestHandled={handleFocusRequest}
     onUndo={undoEditorChange}
     onRedo={redoEditorChange}
   />
@@ -1563,13 +1568,15 @@
             class="block-preview"
           >
             {@render renderChildren(selectedRoot?.content ?? [])}
-            <button
-              class="editor-tail"
-              type="button"
-              tabindex="-1"
-              aria-label="Continue writing"
-              onclick={continueWriting}
-            ></button>
+            {#if activePageChunk && !trailingParagraph(activePageChunk)}
+              <button
+                class="editor-tail"
+                type="button"
+                aria-label="Continue writing"
+                title="Continue writing"
+                onclick={continueWriting}
+              ><IconPlusBold /></button>
+            {/if}
           </div>
         </article>
       {:else}
@@ -1852,12 +1859,30 @@
   }
 
   .editor-tail {
-    flex: 1;
-    min-height: 80px;
+    display: grid;
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    margin-top: 5px;
     padding: 0;
     border: 0;
+    border-radius: 5px;
+    color: var(--faint);
     background: transparent;
-    cursor: text;
+    cursor: pointer;
+  }
+
+  .editor-tail:hover,
+  .editor-tail:focus-visible {
+    outline: 0;
+    color: var(--coral-dark);
+    background: var(--coral-soft);
+  }
+
+  .editor-tail :global(svg) {
+    width: 14px;
+    height: 14px;
   }
 
   .block-preview.loading {

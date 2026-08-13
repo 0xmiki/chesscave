@@ -35,12 +35,34 @@ const COACH_INSTRUCTIONS: &str = concat!(
     "When seeing the board would improve spatial reasoning, call get_position_image with the review key ",
     "and either an exact ply or a player's displayed clock. It returns the requested board as a PNG image. ",
     "For concrete claims about an individual move or live variation, call analyze_position or compare_moves. ",
+    "Exception: when the supplied context says 'Mode: live game against Codex', answer directly from the supplied ",
+    "Stockfish evidence or opening-book context without calling a tool. The live interaction is latency-sensitive. ",
     "If the student says 'my game' but their side is not identified, ask whether they played White or Black. ",
     "Treat Stockfish output as evidence, not prose: ",
     "translate variations into clear plans, tactical motifs, and human-readable explanations. ",
     "Never run shell commands, inspect files, modify data, or use unrelated tools. ",
     "Be concise but educational, and mention uncertainty when search depth is limited."
 );
+
+fn study_coach_model() -> String {
+    env::var("CHESSCAVE_STUDY_COACH_MODEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "gpt-5.6-terra".to_string())
+}
+
+fn live_coach_model() -> String {
+    env::var("CHESSCAVE_LIVE_COACH_MODEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "gpt-5.6-luna".to_string())
+}
+
+fn live_coach_service_tier() -> Option<String> {
+    env::var("CHESSCAVE_LIVE_COACH_SERVICE_TIER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
 
 fn project_root() -> PathBuf {
     if let Ok(root) = env::var("CHESSCAVE_PROJECT_ROOT") {
@@ -112,6 +134,7 @@ fn thread_start_request(id: u64, workspace: &Path) -> Value {
         "method": "thread/start",
         "id": id,
         "params": {
+            "model": study_coach_model(),
             "cwd": workspace,
             "approvalPolicy": "never",
             "sandbox": "read-only",
@@ -165,6 +188,18 @@ async fn emit_reader_events(
                                 );
                             } else {
                                 drop(inner);
+                                let detail = message
+                                    .get("error")
+                                    .and_then(|error| error.get("message"))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("Codex could not create a coaching thread.");
+                                let _ = app.emit(
+                                    "chesscave://coach-event",
+                                    json!({
+                                        "method": "chesscave/error",
+                                        "params": { "message": detail }
+                                    }),
+                                );
                             }
                         }
                     }
@@ -379,6 +414,7 @@ pub async fn coach_send(
     state: State<'_, CoachState>,
     message: String,
     context: String,
+    profile: Option<String>,
 ) -> Result<(), String> {
     if message.trim().is_empty() {
         return Err("The coach message cannot be empty.".to_string());
@@ -404,6 +440,14 @@ pub async fn coach_send(
          Use the ChessCave MCP tools when analysis is needed. Explain the chess idea, not just the engine number."
     );
 
+    let live = profile.as_deref() == Some("live");
+    let model = if live {
+        live_coach_model()
+    } else {
+        study_coach_model()
+    };
+    let effort = if live { "low" } else { "medium" };
+
     write_message(
         stdin,
         &json!({
@@ -411,7 +455,42 @@ pub async fn coach_send(
             "id": id,
             "params": {
                 "threadId": thread_id,
+                "model": model,
+                "effort": effort,
+                "serviceTier": if live { live_coach_service_tier() } else { None },
                 "input": [{ "type": "text", "text": prompt }]
+            }
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn coach_interrupt(state: State<'_, CoachState>, turn_id: String) -> Result<(), String> {
+    if turn_id.trim().is_empty() {
+        return Ok(());
+    }
+
+    let mut inner = state.inner.lock().await;
+    let thread_id = inner
+        .thread_id
+        .clone()
+        .ok_or_else(|| "Codex is not ready to interrupt a turn.".to_string())?;
+    let id = inner.next_id;
+    inner.next_id += 1;
+    let stdin = inner
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "Codex app-server is not running.".to_string())?;
+
+    write_message(
+        stdin,
+        &json!({
+            "method": "turn/interrupt",
+            "id": id,
+            "params": {
+                "threadId": thread_id,
+                "turnId": turn_id
             }
         }),
     )

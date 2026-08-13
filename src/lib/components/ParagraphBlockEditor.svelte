@@ -26,6 +26,7 @@
     commandMenuActiveOptionId,
     onCommandKeydown,
     onTurnInto,
+    onFocusRequestHandled,
     onUndo,
     onRedo,
   }: {
@@ -47,6 +48,7 @@
     commandMenuActiveOptionId?: string;
     onCommandKeydown: (id: string, key: string) => boolean;
     onTurnInto: (id: string, trigger: HTMLButtonElement) => void;
+    onFocusRequestHandled: (token: number) => void;
     onCommit: (id: string, offset: number) => void;
     onSplit: (id: string, start: number, end: number) => void;
     onMergeBackward: (id: string) => boolean;
@@ -67,6 +69,7 @@
   let draftRunsSignature = "";
   let composing = $state(false);
   let appliedFocusToken = -1;
+  let pendingFocusToken = -1;
   let pendingBeforeOffset: number | null = null;
 
   $effect(() => {
@@ -90,7 +93,14 @@
       return;
     }
     appliedFocusToken = request.token;
-    void tick().then(() => setCaretOffset(request.offset));
+    pendingFocusToken = request.token;
+    void tick().then(() => {
+      if (pendingFocusToken === request.token) {
+        pendingFocusToken = -1;
+        setCaretOffset(request.offset);
+      }
+      onFocusRequestHandled(request.token);
+    });
   });
 
   function selectionOffsets(): {
@@ -346,6 +356,12 @@
     }}
     onblur={() => {
       if (!composing) onCommit(block.id, selectionOffsets().end);
+    }}
+    onpointerdown={() => {
+      const request = focusRequest;
+      if (!request || request.blockId !== block.id) return;
+      if (pendingFocusToken === request.token) pendingFocusToken = -1;
+      onFocusRequestHandled(request.token);
     }}
     onclick={(event) => {
       const target = event.target;

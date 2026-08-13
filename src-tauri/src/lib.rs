@@ -11,6 +11,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             engine::engine_status,
             engine::analyze_position,
+            engine::compare_move,
             engine::review_game,
             chess_com::chess_com_dashboard,
             chess_com::chess_com_rapid_since,
@@ -19,6 +20,7 @@ pub fn run() {
             notes::notes_load_page,
             notes::notes_apply_transaction,
             codex::coach_start,
+            codex::coach_interrupt,
             codex::coach_new_thread,
             codex::coach_send,
             codex::coach_stop,

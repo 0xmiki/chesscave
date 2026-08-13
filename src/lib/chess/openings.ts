@@ -1,3 +1,4 @@
+import { Chess } from "chess.js";
 import type { GameSnapshot } from "./types";
 
 export type OpeningPosition = [
@@ -26,6 +27,20 @@ export interface OpeningMatch {
   canonicalPly: number;
   uci: string;
 }
+
+export interface OpeningContinuation {
+  uci: string;
+  match: OpeningMatch;
+}
+
+const TEACHING_REPERTOIRES: Record<string, string[]> = {
+  white: ["e2e4", "d2d4", "c2c4", "g1f3"],
+  black: ["d7d5", "e7e5", "g8f6", "c7c5", "e7e6", "g7g6"],
+  e2e4: ["e7e5", "c7c5", "e7e6", "c7c6", "d7d5", "g8f6", "d7d6", "g7g6"],
+  d2d4: ["d7d5", "g8f6", "f7f5", "c7c5", "e7e6", "g7g6"],
+  c2c4: ["e7e5", "c7c5", "g8f6", "e7e6", "g7g6", "f7f5"],
+  g1f3: ["d7d5", "g8f6", "c7c5", "g7g6", "e7e6", "f7f5"],
+};
 
 let openingBookPromise: Promise<OpeningBook> | null = null;
 
@@ -73,6 +88,55 @@ export function deepestOpeningPly(
     if (book.positions[openingPositionKey(snapshots[ply].fen)]) return ply;
   }
   return 0;
+}
+
+export function openingContinuations(
+  book: OpeningBook | null,
+  fen: string,
+  nextPly: number,
+): OpeningContinuation[] {
+  if (!book) return [];
+  const chess = new Chess(fen);
+  return chess.moves({ verbose: true }).flatMap((move) => {
+    const next = new Chess(fen);
+    next.move({ from: move.from, to: move.to, promotion: move.promotion });
+    const match = exactOpening(book, next.fen(), nextPly);
+    return match
+      ? [{ uci: `${move.from}${move.to}${move.promotion ?? ""}`, match }]
+      : [];
+  });
+}
+
+export function teachingRepertoire(
+  nextPly: number,
+  firstMoveUci: string | null | undefined,
+): string[] {
+  if (nextPly === 1) return TEACHING_REPERTOIRES.white;
+  if (nextPly === 2) return TEACHING_REPERTOIRES[firstMoveUci ?? ""] ?? TEACHING_REPERTOIRES.black;
+  return [];
+}
+
+export function chooseTeachingContinuation(
+  continuations: OpeningContinuation[],
+  preferredMoves: string[],
+  rotation: number,
+): OpeningContinuation | null {
+  if (!continuations.length) return null;
+  const byMove = new Map(continuations.map((continuation) => [continuation.uci, continuation]));
+  const preferred = preferredMoves.flatMap((uci) => {
+    const continuation = byMove.get(uci);
+    return continuation ? [continuation] : [];
+  });
+  const pool = preferred.length
+    ? preferred
+    : [...continuations]
+        .sort((left, right) => {
+          const depth = right.match.canonicalPly - left.match.canonicalPly;
+          return depth || left.match.name.localeCompare(right.match.name);
+        })
+        .slice(0, 4);
+  const index = ((rotation % pool.length) + pool.length) % pool.length;
+  return pool[index];
 }
 
 export function loadOpeningBook(): Promise<OpeningBook> {

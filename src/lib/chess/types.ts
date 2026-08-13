@@ -50,6 +50,12 @@ export interface AnalysisResult {
   lines: EngineLine[];
 }
 
+export interface MoveComparison {
+  analysis: AnalysisResult;
+  playedLine: EngineLine | null;
+  expectedPointsLost: number | null;
+}
+
 export interface EngineStatus {
   available: boolean;
   name: string | null;

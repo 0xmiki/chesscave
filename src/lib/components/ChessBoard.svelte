@@ -676,9 +676,8 @@
   }
 
   .square:focus-visible {
-    z-index: 5;
-    outline: 3px solid #b94f35;
-    outline-offset: -3px;
+    outline: 0;
+    box-shadow: inset 0 0 0 3px #b94f35;
   }
 
 </style>

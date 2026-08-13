@@ -53,6 +53,14 @@ pub struct AnalysisResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MoveComparison {
+    pub analysis: AnalysisResult,
+    pub played_line: Option<EngineLine>,
+    pub expected_points_lost: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReviewClocks {
     pub w: Option<f64>,
     pub b: Option<f64>,
@@ -461,13 +469,21 @@ async fn analyze_with_process(
     })
 }
 
-async fn run_analysis(fen: String, depth: u16, multi_pv: u8) -> Result<AnalysisResult, String> {
+async fn run_analysis(
+    fen: String,
+    depth: u16,
+    multi_pv: u8,
+    move_time_ms: Option<u64>,
+) -> Result<AnalysisResult, String> {
     let mut process = spawn_engine().await?;
     let name = initialize(&mut process).await?;
     let depth = depth.clamp(8, 30);
     let multi_pv = multi_pv.clamp(1, 5);
     configure(&mut process, multi_pv).await?;
-    let position = analyze_with_process(&mut process, 0, fen, &format!("depth {depth}")).await?;
+    let limit = move_time_ms
+        .map(|value| format!("movetime {}", value.clamp(100, 5_000)))
+        .unwrap_or_else(|| format!("depth {depth}"));
+    let position = analyze_with_process(&mut process, 0, fen, &limit).await?;
     let _ = send(&mut process, "quit").await;
     let _ = process.child.wait().await;
 
@@ -485,13 +501,123 @@ pub async fn analyze_position(
     fen: String,
     depth: Option<u16>,
     multi_pv: Option<u8>,
+    move_time_ms: Option<u64>,
 ) -> Result<AnalysisResult, String> {
+    let time_budgeted = move_time_ms.is_some();
+    let timeout_duration = if time_budgeted {
+        Duration::from_secs(6)
+    } else {
+        Duration::from_secs(45)
+    };
     timeout(
-        Duration::from_secs(45),
-        run_analysis(fen, depth.unwrap_or(16), multi_pv.unwrap_or(3)),
+        timeout_duration,
+        run_analysis(
+            fen,
+            depth.unwrap_or(16),
+            multi_pv.unwrap_or(3),
+            move_time_ms,
+        ),
     )
     .await
-    .map_err(|_| "Stockfish analysis timed out after 45 seconds.".to_string())?
+    .map_err(|_| {
+        if time_budgeted {
+            "Stockfish could not choose a move within six seconds.".to_string()
+        } else {
+            "Stockfish analysis timed out after 45 seconds.".to_string()
+        }
+    })?
+}
+
+fn expected_points(line: &EngineLine) -> Option<f64> {
+    if let Some([wins, draws, _losses]) = line.wdl {
+        return Some((f64::from(wins) + f64::from(draws) * 0.5) / 1_000.0);
+    }
+    line.score_cp
+        .map(|score| 1.0 / (1.0 + (-f64::from(score) / 180.0).exp()))
+}
+
+async fn run_move_comparison(
+    fen: String,
+    played_move: String,
+    move_time_ms: u64,
+) -> Result<MoveComparison, String> {
+    if !played_move
+        .chars()
+        .enumerate()
+        .all(|(index, value)| match index {
+            0 | 2 => ('a'..='h').contains(&value),
+            1 | 3 => ('1'..='8').contains(&value),
+            4 => matches!(value, 'q' | 'r' | 'b' | 'n'),
+            _ => false,
+        })
+        || !(4..=5).contains(&played_move.len())
+    {
+        return Err("The played move must use UCI notation.".to_string());
+    }
+
+    let mut process = spawn_engine().await?;
+    let name = initialize(&mut process).await?;
+    configure(&mut process, 3).await?;
+    let best_budget = (move_time_ms * 2 / 3).clamp(150, 2_000);
+    let played_budget = (move_time_ms - best_budget).clamp(100, 1_000);
+    let best = analyze_with_process(
+        &mut process,
+        0,
+        fen.clone(),
+        &format!("movetime {best_budget}"),
+    )
+    .await?;
+
+    configure(&mut process, 1).await?;
+    let played = analyze_with_process(
+        &mut process,
+        0,
+        fen.clone(),
+        &format!("movetime {played_budget} searchmoves {played_move}"),
+    )
+    .await?;
+    let _ = send(&mut process, "quit").await;
+    let _ = process.child.wait().await;
+
+    let best_line = best.lines.first();
+    let played_line = played.lines.first().cloned();
+    let white_to_move = fen.split_whitespace().nth(1) != Some("b");
+    let expected_points_lost = best_line
+        .and_then(expected_points)
+        .zip(played_line.as_ref().and_then(expected_points))
+        .map(|(best_points, played_points)| {
+            if white_to_move {
+                (best_points - played_points).max(0.0)
+            } else {
+                (played_points - best_points).max(0.0)
+            }
+        });
+
+    Ok(MoveComparison {
+        analysis: AnalysisResult {
+            engine: name,
+            fen: best.fen,
+            best_move: best.best_move,
+            elapsed_ms: best.elapsed_ms + played.elapsed_ms,
+            lines: best.lines,
+        },
+        played_line,
+        expected_points_lost,
+    })
+}
+
+#[tauri::command]
+pub async fn compare_move(
+    fen: String,
+    played_move: String,
+    move_time_ms: Option<u64>,
+) -> Result<MoveComparison, String> {
+    timeout(
+        Duration::from_secs(6),
+        run_move_comparison(fen, played_move, move_time_ms.unwrap_or(650)),
+    )
+    .await
+    .map_err(|_| "Stockfish could not compare the move within six seconds.".to_string())?
 }
 
 fn game_review_key(

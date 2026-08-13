@@ -287,7 +287,10 @@
 
 <div class="app-shell">
   {#snippet headerActions()}
-    <a class="conversion-link" href="/practice/conversion">Conversion drill</a>
+    <div class="practice-links">
+      <a class="codex-link" href="/play/codex">Play with Codex</a>
+      <a class="conversion-link" href="/practice/conversion">Conversion drill</a>
+    </div>
   {/snippet}
 
   <AppHeader
@@ -554,6 +557,13 @@
     overflow: auto;
   }
 
+  .practice-links {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .codex-link,
   .conversion-link,
   .primary-link {
     display: inline-flex;

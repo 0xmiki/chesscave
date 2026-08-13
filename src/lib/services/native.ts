@@ -5,6 +5,7 @@ import type {
   EngineStatus,
   GameRecord,
   GameReview,
+  MoveComparison,
   ReviewProgress,
 } from "$lib/chess/types";
 import type { ChessComDashboard, ChessComGame } from "$lib/chess/chesscom";
@@ -48,8 +49,22 @@ export async function analyzePosition(
   fen: string,
   depth = 16,
   multiPv = 3,
+  moveTimeMs?: number,
 ): Promise<AnalysisResult> {
-  return invoke<AnalysisResult>("analyze_position", { fen, depth, multiPv });
+  return invoke<AnalysisResult>("analyze_position", {
+    fen,
+    depth,
+    multiPv,
+    moveTimeMs,
+  });
+}
+
+export async function compareMove(
+  fen: string,
+  playedMove: string,
+  moveTimeMs = 650,
+): Promise<MoveComparison> {
+  return invoke<MoveComparison>("compare_move", { fen, playedMove, moveTimeMs });
 }
 
 export async function reviewGame(
@@ -108,8 +123,16 @@ export async function newCoachThread(): Promise<void> {
   await invoke("coach_new_thread");
 }
 
-export async function sendCoachMessage(message: string, context: string): Promise<void> {
-  await invoke("coach_send", { message, context });
+export async function sendCoachMessage(
+  message: string,
+  context: string,
+  profile: "study" | "live" = "study",
+): Promise<void> {
+  await invoke("coach_send", { message, context, profile });
+}
+
+export async function interruptCoachTurn(turnId: string): Promise<void> {
+  await invoke("coach_interrupt", { turnId });
 }
 
 export function onCoachEvent(
