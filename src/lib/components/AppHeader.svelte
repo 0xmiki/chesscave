@@ -8,7 +8,7 @@
     subtitle = "",
     actions,
   }: {
-    active: "home" | "study" | "practice" | "notes";
+    active: "home" | "play" | "study" | "notes";
     title: string;
     subtitle?: string;
     actions?: Snippet;
@@ -25,8 +25,8 @@
 
   <nav aria-label="Primary navigation">
     <a class:active={active === "home"} href="/">Home</a>
+    <a class:active={active === "play"} href="/play/codex">Play</a>
     <a class:active={active === "study"} href="/study">Study</a>
-    <a class:active={active === "practice"} href="/practice">Practice</a>
     <a class:active={active === "notes"} href="/notes">Notes</a>
   </nav>
 
@@ -44,10 +44,15 @@
 
 <style>
   .topbar {
+    position: relative;
+    z-index: 20;
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr) auto;
     gap: 24px;
     align-items: center;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
     min-height: 68px;
     padding: 0 28px;
     border-bottom: 1px solid var(--line);

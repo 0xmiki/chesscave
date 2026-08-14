@@ -4,13 +4,13 @@
   import IconArrowCounterClockwiseRegular from "phosphor-icons-svelte/IconArrowCounterClockwiseRegular.svelte";
   import IconArrowsDownUpRegular from "phosphor-icons-svelte/IconArrowsDownUpRegular.svelte";
   import IconFlagCheckeredRegular from "phosphor-icons-svelte/IconFlagCheckeredRegular.svelte";
-  import IconHorseRegular from "phosphor-icons-svelte/IconHorseRegular.svelte";
   import IconPaperPlaneTiltRegular from "phosphor-icons-svelte/IconPaperPlaneTiltRegular.svelte";
   import IconCaretLeftRegular from "phosphor-icons-svelte/IconCaretLeftRegular.svelte";
   import IconCaretRightRegular from "phosphor-icons-svelte/IconCaretRightRegular.svelte";
   import IconSkipBackRegular from "phosphor-icons-svelte/IconSkipBackRegular.svelte";
   import IconSkipForwardRegular from "phosphor-icons-svelte/IconSkipForwardRegular.svelte";
   import ChessBoard from "$lib/components/ChessBoard.svelte";
+  import AppHeader from "$lib/components/AppHeader.svelte";
   import EvaluationBar from "$lib/components/EvaluationBar.svelte";
   import MoveBadge from "$lib/components/MoveBadge.svelte";
   import { bestAlternativeArrow, uciToArrow } from "$lib/chess/arrows";
@@ -1011,15 +1011,24 @@
 </svelte:head>
 
 <div class="play-shell">
-  <header class="play-header">
-    <a class="brand" href="/" aria-label="ChessCave home"><IconHorseRegular /><span>ChessCave</span></a>
-    <div class="mode-title"><strong>Play with Codex</strong><span>{!gameStarted ? "Session setup" : historyPly !== null ? historyOpening?.name ?? "Move history" : currentOpening?.name ?? "A game in progress"}</span></div>
+  {#snippet headerActions()}
     <div class="header-tools">
       <button type="button" onclick={() => (flipped = !flipped)} title="Flip board" aria-label="Flip board"><IconArrowsDownUpRegular /></button>
       <button type="button" onclick={() => newGame()} title="New game" aria-label="New game"><IconArrowCounterClockwiseRegular /></button>
       <button type="button" onclick={resign} disabled={!gameStarted || phase === "complete"} title="Resign" aria-label="Resign"><IconFlagCheckeredRegular /></button>
     </div>
-  </header>
+  {/snippet}
+
+  <AppHeader
+    active="play"
+    title="Play with Codex"
+    subtitle={!gameStarted
+      ? "Session setup"
+      : historyPly !== null
+        ? historyOpening?.name ?? "Move history"
+        : currentOpening?.name ?? "A game in progress"}
+    actions={headerActions}
+  />
 
   <main>
     <section class:setup={!gameStarted} class="table" aria-label="Game against Codex">
@@ -1224,26 +1233,20 @@
 </div>
 
 <style>
-  .play-shell { height: 100%; overflow: auto; color: var(--ink); background: #ece7dc; }
-  .play-header { position: sticky; z-index: 10; top: 0; display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; align-items: center; min-height: 64px; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(251, 248, 242, .96); backdrop-filter: blur(12px); }
-  .brand { display: inline-flex; gap: 9px; align-items: center; width: fit-content; color: var(--ink); font-family: var(--display); font-size: 18px; font-weight: 650; text-decoration: none; }
-  .brand :global(svg) { width: 30px; height: 30px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--coral-dark); }
-  .mode-title { display: grid; justify-items: center; gap: 2px; }
-  .mode-title strong { font-family: var(--display); font-size: 16px; font-weight: 620; }
-  .mode-title span { color: var(--muted); font-size: 10px; }
+  .play-shell { display: grid; grid-template-rows: 68px minmax(0, 1fr); height: 100%; overflow: hidden; color: var(--ink); background: #ece7dc; }
   .header-tools { display: flex; gap: 6px; justify-content: end; }
   .header-tools button { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid transparent; border-radius: 50%; color: var(--ink-soft); background: transparent; cursor: pointer; }
   .header-tools button:hover:not(:disabled) { border-color: var(--line); background: var(--pearl-raised); }
   .header-tools button:disabled { opacity: .35; }
   .header-tools :global(svg) { width: 17px; height: 17px; }
-  main { min-height: calc(100% - 64px); }
+  main { min-height: 0; overflow: auto; }
   .table { display: grid; grid-template-columns: minmax(360px, 660px) minmax(300px, 430px); gap: clamp(42px, 7vw, 104px); align-items: center; justify-content: center; min-height: calc(100vh - 130px); padding: 28px clamp(24px, 5vw, 76px) 24px; }
   .board-column { width: min(100%, calc(100vh - 250px)); min-width: 0; }
   .board-stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: stretch; }
   .board-stage.with-evaluation { grid-template-columns: 28px minmax(0, 1fr); }
   .evaluation-slot { display: flex; min-height: 0; }
   .evaluation-slot :global(.evaluation) { min-height: 0; height: 100%; }
-  .board-wrap { position: relative; transition: opacity 180ms ease; }
+  .board-wrap { position: relative; transition: opacity var(--motion-fast) ease-out; }
   .board-wrap.waiting :global(.board) { filter: saturate(.88); }
   .thinking-mark { position: absolute; z-index: 8; top: 12px; right: 12px; display: flex; gap: 4px; align-items: center; height: 24px; padding: 0 9px; border: 1px solid rgba(255,255,255,.45); border-radius: 20px; background: rgba(41,36,31,.72); pointer-events: none; }
   .thinking-mark i { width: 4px; height: 4px; border-radius: 50%; background: #fffaf0; animation: pulse 1.2s ease-in-out infinite; }
@@ -1327,7 +1330,7 @@
   .coach-setting strong { font-size: 10px; font-weight: 700; }
   .coach-setting small { color: var(--muted); font-size: 9px; }
   .coach-setting button { position: relative; width: 34px; height: 18px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0; background: var(--pearl-raised); cursor: pointer; }
-  .coach-setting button i { position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform 160ms ease, background 160ms ease; }
+  .coach-setting button i { position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform var(--motion-fast) ease-out, background var(--motion-fast) ease-out; }
   .coach-setting button.on { border-color: var(--sage); background: color-mix(in srgb, var(--sage) 18%, var(--pearl-raised)); }
   .coach-setting button.on i { background: var(--sage); transform: translateX(16px); }
   .side-choice { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line-strong); border-radius: 3px; overflow: hidden; }
@@ -1356,7 +1359,7 @@
     h1 { font-size: 28px; }
   }
   @media (max-width: 560px) {
-    .play-header { grid-template-columns: auto minmax(0, 1fr) auto; padding-inline: 12px; }.brand span { display: none; }.mode-title { justify-items: start; padding-left: 10px; }.mode-title span { display: none; }
+    .play-shell { grid-template-rows: 62px minmax(0, 1fr); }
     .table { padding: 12px 12px 28px; }.player-row { min-height: 42px; }.table-note { min-height: 330px; }.move-ribbon { padding-inline: 12px; }
     .table-note.reflection { min-height: 560px; }
     .move-comparison h1 { font-size: 23px; }

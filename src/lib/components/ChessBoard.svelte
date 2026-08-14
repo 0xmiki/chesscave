@@ -134,7 +134,7 @@
           { transform: "translate3d(0, 0, 0)" },
         ],
         {
-          duration: 260,
+          duration: 170,
           easing: "cubic-bezier(0.22, 0.74, 0.2, 1)",
           fill: "none",
         },

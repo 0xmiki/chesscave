@@ -50,7 +50,7 @@
     bottom: 0;
     width: 100%;
     background: #efeee9;
-    transition: height 420ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: height var(--motion-standard) ease-out;
   }
 
   .score {

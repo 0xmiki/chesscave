@@ -1855,7 +1855,7 @@
     flex: 1;
     flex-direction: column;
     margin-top: 36px;
-    transition: opacity 140ms ease;
+    transition: opacity var(--motion-fast) ease-out;
   }
 
   .editor-tail {
@@ -2063,7 +2063,7 @@
       inset: 0 auto 0 0;
       width: min(310px, calc(100vw - 44px));
       transform: translateX(-102%);
-      transition: transform 180ms ease;
+      transition: transform var(--motion-standard) ease-out;
       box-shadow: 16px 0 40px rgba(60, 48, 39, 0.15);
     }
 

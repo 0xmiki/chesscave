@@ -416,7 +416,7 @@
   {/snippet}
 
   <AppHeader
-    active="practice"
+    active="study"
     title="Conversion Trainer"
     subtitle="Turn advantages into points"
     actions={headerActions}

@@ -27,10 +27,13 @@
   --danger: #a94f42;
   --display: "Fraunces Variable", Fraunces, Georgia, serif;
   --interface: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+  --motion-fast: 90ms;
+  --motion-standard: 140ms;
 }
 
 * {
   box-sizing: border-box;
+  scroll-behavior: auto !important;
 }
 
 html,
@@ -40,6 +43,7 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  overscroll-behavior: none;
   background: var(--paper);
 }
 

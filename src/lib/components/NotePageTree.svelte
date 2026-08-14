@@ -327,7 +327,7 @@
     width: 13px;
     height: 13px;
     color: var(--muted);
-    transition: transform 140ms ease;
+    transition: transform var(--motion-fast) ease-out;
   }
 
   .disclosure span.expanded {

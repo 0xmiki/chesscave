@@ -19,9 +19,8 @@ The first milestone includes:
 - a game-at-a-glance rail with an interactive winning-chances graph, per-player
   move classifications, whole-game accuracy, and opening/middlegame/endgame
   accuracy;
-- a weekly Rapid training room that ranks the last seven days by decision
-  quality, surfaces evidence-backed strengths, and launches key moments into a
-  conversion trainer with clock-aware Stockfish sparring and hidden engine help;
+- a calm, day-grouped game history on Home, with any game opening directly in
+  Study and no ranking layer between the player and their games;
 - a local read-only MCP server for engine analysis, whole-game review, and
   clock-addressable PNG board images;
 - a streamed Codex app-server sidebar with live thinking, MCP, waiting, and
