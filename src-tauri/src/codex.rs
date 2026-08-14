@@ -38,6 +38,7 @@ const COACH_INSTRUCTIONS: &str = concat!(
     "Exception: when the supplied context says 'Mode: live game against Codex', answer directly from the supplied ",
     "Stockfish evidence or opening-book context without calling a tool. The live interaction is latency-sensitive. ",
     "If the student says 'my game' but their side is not identified, ask whether they played White or Black. ",
+    "For patch-card generation, the supplied student side is authoritative. Never create a drill for the opponent's move or perspective. ",
     "Treat Stockfish output as evidence, not prose: ",
     "translate variations into clear plans, tactical motifs, and human-readable explanations. ",
     "Never run shell commands, inspect files, modify data, or use unrelated tools. ",
@@ -48,7 +49,7 @@ fn study_coach_model() -> String {
     env::var("CHESSCAVE_STUDY_COACH_MODEL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "gpt-5.6-terra".to_string())
+        .unwrap_or_else(|| "gpt-5.6-sol".to_string())
 }
 
 fn live_coach_model() -> String {
@@ -56,6 +57,13 @@ fn live_coach_model() -> String {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "gpt-5.6-luna".to_string())
+}
+
+fn deliberate_coach_model() -> String {
+    env::var("CHESSCAVE_DELIBERATE_COACH_MODEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "gpt-5.6-sol".to_string())
 }
 
 fn live_coach_service_tier() -> Option<String> {
@@ -441,12 +449,21 @@ pub async fn coach_send(
     );
 
     let live = profile.as_deref() == Some("live");
+    let deliberate = profile.as_deref() == Some("deliberate");
     let model = if live {
         live_coach_model()
+    } else if deliberate {
+        deliberate_coach_model()
     } else {
         study_coach_model()
     };
-    let effort = if live { "low" } else { "medium" };
+    let effort = if live {
+        "low"
+    } else if deliberate {
+        "high"
+    } else {
+        "medium"
+    };
 
     write_message(
         stdin,

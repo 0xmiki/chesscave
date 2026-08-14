@@ -116,7 +116,7 @@ export async function newCoachThread(): Promise<void> {
 export async function sendCoachMessage(
   message: string,
   context: string,
-  profile: "study" | "live" = "study",
+  profile: "study" | "live" | "deliberate" = "study",
 ): Promise<void> {
   await invoke("coach_send", { message, context, profile });
 }

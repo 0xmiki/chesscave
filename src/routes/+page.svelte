@@ -171,7 +171,7 @@
 
   function updateVisibleDay(event: Event) {
     const scroller = event.currentTarget as HTMLElement;
-    const marker = scroller.getBoundingClientRect().top + 18;
+    const marker = scroller.getBoundingClientRect().top + 36;
     const groups = Array.from(
       scroller.querySelectorAll<HTMLElement>("[data-day-key]"),
     );
@@ -430,14 +430,6 @@
           {/each}
         </section>
 
-        <section class="recent-heading">
-          <div>
-            <span class="eyebrow">YOUR GAMES</span>
-            <h2>One day at a time.</h2>
-          </div>
-          <p>Games played on the same day stay together. Open any game when you are ready to study it.</p>
-        </section>
-
         <section
           class="history"
           class:blitz-history={activeTimeClass === "blitz"}
@@ -473,26 +465,28 @@
 
           {#if activeGames.length}
             <div
-              class="day-groups"
+              class="history-table"
               role="tabpanel"
+              aria-label={`${activeTimeClass} game history`}
               bind:this={dayScroller}
               onscroll={updateVisibleDay}
             >
-              {#each activeGameDays as day (day.key)}
-                <section
-                  class="day-group"
-                  aria-label={day.label}
-                  data-day-key={day.key}
-                >
-                  <div class="history-header" aria-hidden="true">
-                    <span>Time control</span>
-                    <span>Players</span>
-                    <span>Result</span>
-                    <span class="accuracy-column">Accuracy</span>
-                    <span class="moves-column">Moves</span>
-                    <span class="date-column">Played</span>
-                    <span>Study</span>
-                  </div>
+              <div class="history-header">
+                <span>Time control</span>
+                <span>Players</span>
+                <span>Result</span>
+                <span>Accuracy</span>
+                <span>Moves</span>
+                <span>Played</span>
+                <span>Study</span>
+              </div>
+              <div class="day-groups">
+                {#each activeGameDays as day (day.key)}
+                  <section
+                    class="day-group"
+                    aria-label={day.label}
+                    data-day-key={day.key}
+                  >
                   <div class="history-list">
                     {#each day.games as game (game.uuid || game.url)}
                       {@const summary = summarizeChessComGame(game, username)}
@@ -500,7 +494,7 @@
                         class="history-row"
                         type="button"
                         disabled={Boolean(openingGameUrl)}
-                        aria-label={`${summary.outcome === "win" ? "Win" : summary.outcome === "draw" ? "Draw" : "Loss"} against ${summary.opponent.username}. Open game in Study.`}
+                        aria-label={`${summary.outcome === "win" ? "Won" : summary.outcome === "draw" ? "Drew" : "Lost"} against ${summary.opponent.username}, ${formatHistoryTimeControl(game.timeControl)}, played ${formatGameTime(game.endTime)}. ${reviewedUrls.has(game.url) ? "Reviewed" : "Not reviewed"}. Open game in Study.`}
                         onclick={() => void openGame(game)}
                       >
                         <span class="history-time">
@@ -544,31 +538,46 @@
                         </span>
 
                         <span class="history-result">
-                          <strong class={summary.outcome}>
-                            {summary.outcome === "win" ? "Win" : summary.outcome === "draw" ? "Draw" : "Loss"}
-                          </strong>
+                          <span
+                            class={`result-icon ${summary.outcome}`}
+                            role="img"
+                            aria-label={summary.outcome === "win" ? "Won" : summary.outcome === "draw" ? "Draw" : "Lost"}
+                            title={summary.outcome === "win" ? "Won" : summary.outcome === "draw" ? "Draw" : "Lost"}
+                          >
+                            {#if summary.outcome === "win"}
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.3 4.3L19 7.2"></path></svg>
+                            {:else if summary.outcome === "loss"}
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+                            {:else}
+                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9h12M6 15h12"></path></svg>
+                            {/if}
+                          </span>
                           <small>{scoreFor(game, "white")}–{scoreFor(game, "black")}</small>
                         </span>
 
-                        <span class="history-accuracy accuracy-column">
+                        <span class="history-accuracy">
                           <span>{formatAccuracy(game.accuracies?.white)}</span>
                           <span>{formatAccuracy(game.accuracies?.black)}</span>
                         </span>
 
-                        <span class="history-moves moves-column">{fullMoveCount(game)}</span>
-                        <span class="history-date date-column">{formatGameTime(game.endTime)}</span>
+                        <span class="history-moves">{fullMoveCount(game)}</span>
+                        <span class="history-date">{formatGameTime(game.endTime)}</span>
                         <span class="review-status" class:reviewed={reviewedUrls.has(game.url)}>
-                          {openingGameUrl === game.url
-                            ? "Opening…"
-                            : reviewedUrls.has(game.url)
-                              ? "Reviewed"
-                              : "Open"}
+                          <strong>
+                            {openingGameUrl === game.url
+                              ? "Opening…"
+                              : reviewedUrls.has(game.url)
+                                ? "Reopen"
+                                : "Study"}
+                          </strong>
+                          <small>{reviewedUrls.has(game.url) ? "Reviewed" : "Not reviewed"}</small>
                         </span>
                       </button>
                     {/each}
                   </div>
-                </section>
-              {/each}
+                  </section>
+                {/each}
+              </div>
             </div>
           {:else}
             <div class="empty-games">No recent {activeTimeClass} games found.</div>
@@ -664,7 +673,6 @@
   }
 
   .onboarding-copy h2,
-  .recent-heading h2,
   .identity h2 {
     margin: 0;
     font-family: var(--display);
@@ -980,33 +988,12 @@
     color: var(--faint);
   }
 
-  .recent-heading {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    margin: 30px 0 14px;
-  }
-
-  .recent-heading h2 {
-    margin-top: 4px;
-    font-size: 27px;
-  }
-
-  .recent-heading p {
-    max-width: 43ch;
-    margin: 0 0 3px;
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 1.5;
-    text-align: right;
-  }
-
   .history {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     flex: 1 1 auto;
     min-height: 140px;
+    margin-top: 30px;
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: 12px;
@@ -1105,27 +1092,33 @@
   }
 
   .history-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
     min-height: 34px;
     padding: 0 18px;
-    border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
     color: var(--faint);
-    background: rgba(223, 216, 204, 0.18);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0;
+    background: var(--paper);
+    box-shadow: 0 1px 0 rgba(68, 53, 42, 0.04);
+    font-size: 10px;
+    font-weight: 650;
   }
 
   .history-list {
     display: grid;
   }
 
-  .day-groups {
+  .history-table {
     min-height: 0;
-    overflow-y: auto;
+    overflow: auto;
     overscroll-behavior: contain;
     scrollbar-color: var(--line-strong) transparent;
     scrollbar-gutter: stable;
+  }
+
+  .day-groups {
+    display: grid;
   }
 
   .day-group + .day-group {
@@ -1293,43 +1286,48 @@
 
   .history-result {
     display: grid;
-    justify-items: start;
+    justify-items: center;
     gap: 4px;
     font-variant-numeric: tabular-nums;
   }
 
-  .history-result > strong {
-    min-width: 44px;
-    padding: 4px 8px;
-    border-radius: 999px;
+  .result-icon {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    place-items: center;
     color: var(--ink-soft);
-    background: var(--sage-soft);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0;
-    text-align: center;
   }
 
-  .history-result > strong.win {
-    color: #fff;
-    background: var(--sage);
+  .result-icon.win {
+    color: var(--sage);
   }
 
-  .history-result > strong.loss {
+  .result-icon.loss {
     color: var(--coral-dark);
-    background: var(--coral-soft);
+  }
+
+  .result-icon svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.2;
   }
 
   .history-result > small {
-    padding-left: 8px;
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 600;
+    color: var(--faint);
+    font-size: 10px;
+    font-weight: 550;
   }
 
   .history-accuracy {
     display: grid;
-    gap: 8px;
+    grid-template-rows: repeat(2, 26px);
+    gap: 4px;
+    align-items: center;
     color: var(--muted);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
@@ -1344,21 +1342,28 @@
 
   .review-status {
     display: grid;
-    min-height: 32px;
-    padding: 0 9px;
-    place-items: center;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
+    justify-items: start;
+    gap: 2px;
     color: var(--coral-dark);
-    background: var(--pearl-raised);
-    font-size: 11px;
-    font-weight: 600;
-    text-align: center;
   }
 
-  .review-status.reviewed {
+  .review-status strong {
+    font-size: 11px;
+    font-weight: 680;
+  }
+
+  .review-status strong::after {
+    content: " →";
+  }
+
+  .review-status small {
+    color: var(--faint);
+    font-size: 8px;
+    font-weight: 550;
+  }
+
+  .review-status.reviewed strong {
     color: var(--sage);
-    background: var(--sage-soft);
   }
 
   .empty-games {
@@ -1391,13 +1396,7 @@
 
     .history-header,
     .history-row {
-      grid-template-columns: 76px minmax(180px, 1fr) 76px 96px 82px;
-      gap: 10px;
-    }
-
-    .accuracy-column,
-    .moves-column {
-      display: none;
+      min-width: 850px;
     }
   }
 
@@ -1454,15 +1453,6 @@
       gap: 10px;
     }
 
-    .recent-heading {
-      display: block;
-    }
-
-    .recent-heading p {
-      margin-top: 8px;
-      text-align: left;
-    }
-
     .history-toolbar {
       align-items: flex-start;
       gap: 12px;
@@ -1471,52 +1461,6 @@
     .history-position > div {
       display: grid;
       gap: 2px;
-    }
-
-    .history-header {
-      display: none;
-    }
-
-    .history-row {
-      grid-template-areas:
-        "time players result"
-        "time players review";
-      grid-template-columns: 72px minmax(0, 1fr) 72px;
-      grid-template-rows: 1fr 1fr;
-      min-height: 92px;
-      padding: 10px 12px;
-    }
-
-    .history-time { grid-area: time; }
-    .history-players { grid-area: players; }
-    .history-result { grid-area: result; align-self: end; }
-    .review-status { grid-area: review; align-self: start; }
-
-    .history-time small {
-      display: block;
-    }
-
-    .date-column {
-      display: none;
-    }
-
-    .history-players > span > small {
-      display: none;
-    }
-
-    .history-result > strong {
-      min-width: 42px;
-    }
-
-    .review-status {
-      min-height: auto;
-      padding: 0;
-      border: 0;
-      background: transparent;
-    }
-
-    .review-status.reviewed {
-      background: transparent;
     }
 
     .username-field {

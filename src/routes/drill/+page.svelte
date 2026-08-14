@@ -7,11 +7,17 @@
   import { uciToArrow } from "$lib/chess/arrows";
   import { STUDY_STORAGE_KEY } from "$lib/chess/chesscom";
   import {
+    isPatchForStudentTurn,
     isAcceptedPatchMove,
+    patchStudentSide,
     reviewPatchCard,
   } from "$lib/patches/patches";
   import type { PatchCard, PatchReviewResult } from "$lib/patches/types";
-  import { listPatchCards, savePatchCard } from "$lib/services/patches";
+  import {
+    deletePatchCard,
+    listPatchCards,
+    savePatchCard,
+  } from "$lib/services/patches";
 
   let cards = $state<PatchCard[]>([]);
   let loading = $state(true);
@@ -20,6 +26,8 @@
   let attemptedFen = $state<string | null>(null);
   let attemptedMove = $state<{ uci: string; san: string; correct: boolean } | null>(null);
   let saving = $state(false);
+  let deleting = $state(false);
+  let confirmingDeleteId = $state<string | null>(null);
   let previousCardId = "";
   let sessionTotal = $state(0);
   let sessionCompleted = $state(0);
@@ -29,9 +37,14 @@
       .filter((card) => card.schedule.dueAt <= Date.now())
       .sort((left, right) => left.schedule.dueAt - right.schedule.dueAt),
   );
+  const savedCards = $derived(
+    [...cards].sort((left, right) => right.createdAt - left.createdAt),
+  );
   const card = $derived(dueCards[0] ?? null);
   const boardFen = $derived(attemptedFen ?? card?.source.fen ?? new Chess().fen());
   const sourcePosition = $derived(card ? new Chess(card.source.fen) : new Chess());
+  const studentSide = $derived(card ? patchStudentSide(card.source) : "white");
+  const wrongSideCard = $derived(card ? !isPatchForStudentTurn(card.source) : false);
   const legalTargets = $derived.by(() => {
     if (!card || attemptedMove || !selected) return [];
     return sourcePosition
@@ -67,6 +80,7 @@
     selected = null;
     attemptedFen = null;
     attemptedMove = null;
+    confirmingDeleteId = null;
   });
 
   onMount(() => {
@@ -84,7 +98,7 @@
   });
 
   function handleSquare(square: string) {
-    if (!card || attemptedMove) return;
+    if (!card || attemptedMove || wrongSideCard) return;
     const piece = sourcePosition.get(square as Square);
     if (!selected) {
       if (piece?.color === sourcePosition.turn()) selected = square;
@@ -144,6 +158,23 @@
     await goto("/study");
   }
 
+  async function deleteCard(cardToDelete: PatchCard) {
+    if (deleting) return;
+    const wasDue = cardToDelete.schedule.dueAt <= Date.now();
+    deleting = true;
+    error = "";
+    try {
+      await deletePatchCard(cardToDelete.id);
+      cards = cards.filter((existing) => existing.id !== cardToDelete.id);
+      if (wasDue) sessionTotal = Math.max(sessionCompleted, sessionTotal - 1);
+      confirmingDeleteId = null;
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      deleting = false;
+    }
+  }
+
   function handleReviewShortcut(event: KeyboardEvent) {
     if (!attemptedMove || saving || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
@@ -164,7 +195,7 @@
   {#snippet headerActions()}
     {#if cards.length}
       <span class="due-count">
-        {sessionTotal ? `${Math.min(sessionCompleted + 1, sessionTotal)} of ${sessionTotal}` : "Queue complete"}
+        {dueCards.length ? `${Math.min(sessionCompleted + 1, sessionTotal)} of ${sessionTotal}` : "Queue complete"}
         · {cards.length} saved
       </span>
     {/if}
@@ -180,7 +211,7 @@
   <main>
     {#if loading}
       <section class="state-card"><span class="spinner"></span><p>Loading your patches…</p></section>
-    {:else if error && !card}
+    {:else if error && !card && !cards.length}
       <section class="state-card error-state"><span>DRILL UNAVAILABLE</span><h1>Your patches could not be opened.</h1><p>{error}</p></section>
     {:else if !card}
       <section class="state-card empty-state">
@@ -192,14 +223,40 @@
             : "Open a game in Study, stop on the move that mattered, and choose Patch."}
         </p>
         <a href="/study">Open Study</a>
+        {#if cards.length}
+          <div class="saved-drills" aria-label="Saved drills">
+            {#each savedCards as savedCard (savedCard.id)}
+              <div class="saved-drill">
+                <div>
+                  <strong>{savedCard.source.gameTitle}</strong>
+                  <small>
+                    You are {patchStudentSide(savedCard.source) === "white" ? "White" : "Black"}
+                    · next review {new Date(savedCard.schedule.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  </small>
+                </div>
+                {#if confirmingDeleteId === savedCard.id}
+                  <div class="delete-confirmation" role="group" aria-label="Confirm drill deletion">
+                    <span>Delete?</span>
+                    <button type="button" disabled={deleting} onclick={() => (confirmingDeleteId = null)}>Cancel</button>
+                    <button class="confirm-delete" type="button" disabled={deleting} onclick={() => deleteCard(savedCard)}>
+                      {deleting ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                {:else}
+                  <button class="delete-trigger" type="button" onclick={() => (confirmingDeleteId = savedCard.id)}>Delete</button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          {#if error}<p class="save-error" role="alert">{error}</p>{/if}
+        {/if}
       </section>
     {:else}
       <section class="drill-shell">
         <div class="board-column">
           <div class="card-context">
             <span>{card.source.gameTitle}</span>
-            <strong>{card.quiz.prompt}</strong>
-            <small>{card.source.orientation === "white" ? "White" : "Black"} at the bottom · play your answer</small>
+            <small>You are {studentSide === "white" ? "White" : "Black"} · {card.source.orientation === "white" ? "White" : "Black"} at the bottom</small>
           </div>
           <div class:answered={Boolean(attemptedMove)} class="board-wrap">
             <ChessBoard
@@ -218,13 +275,18 @@
         </div>
 
         <aside class:revealed={Boolean(attemptedMove)} class="lesson">
-          {#if !attemptedMove}
+          {#if wrongSideCard}
+            <div class="waiting-copy side-warning">
+              <span>SIDE MISMATCH</span>
+              <h1>This is your opponent’s turn.</h1>
+              <p>This older drill has the wrong perspective, so ChessCave will not ask you to practice it.</p>
+            </div>
+          {:else if !attemptedMove}
             <div class="waiting-copy">
               <span>YOUR TURN</span>
               <h1>Commit to a move.</h1>
               <p>The explanation stays hidden until you make a decision on the board.</p>
             </div>
-            <button class="source-link" type="button" onclick={openSource}>Open source game</button>
           {:else}
             <div class:correct={attemptedMove.correct} class="result" aria-live="polite">
               <span>{attemptedMove.correct ? "FOUND" : "NOT YET"}</span>
@@ -252,7 +314,6 @@
             {#if principle?.type === "principle"}
               <div class="principle"><span>PATCH</span><p>{principle.text}</p></div>
             {/if}
-            {#if error}<p class="save-error">{error}</p>{/if}
             <div class="review-actions">
               <button type="button" disabled={saving} onclick={() => record("again")}> 
                 <span>{saving ? "Saving…" : "Again"}</span>
@@ -263,8 +324,22 @@
                 <small><kbd>2</kbd> · {understoodInterval}</small>
               </button>
             </div>
-            <button class="source-link after-answer" type="button" onclick={openSource}>Open source game</button>
           {/if}
+          {#if error}<p class="save-error" role="alert">{error}</p>{/if}
+          <div class="card-actions">
+            <button class="source-link" type="button" onclick={openSource}>Open source game</button>
+            {#if confirmingDeleteId === card.id}
+              <div class="delete-confirmation" role="group" aria-label="Confirm drill deletion">
+                <span>Delete this drill?</span>
+                <button type="button" disabled={deleting} onclick={() => (confirmingDeleteId = null)}>Cancel</button>
+                <button class="confirm-delete" type="button" disabled={deleting} onclick={() => deleteCard(card)}>
+                  {deleting ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            {:else}
+              <button class="delete-trigger" type="button" onclick={() => (confirmingDeleteId = card.id)}>Delete drill</button>
+            {/if}
+          </div>
         </aside>
       </section>
     {/if}
@@ -319,14 +394,6 @@
     font-size: 9px;
   }
 
-  .card-context strong {
-    grid-column: 1 / -1;
-    font-family: var(--display);
-    font-size: clamp(21px, 2.2vw, 30px);
-    font-variation-settings: "opsz" 32, "wght" 570;
-    line-height: 1.12;
-  }
-
   .card-context small {
     grid-row: 1;
     grid-column: 2;
@@ -379,7 +446,6 @@
 
   .source-link {
     width: fit-content;
-    margin-top: 28px;
     border: 0;
     border-bottom: 1px solid var(--line-strong);
     padding: 5px 0;
@@ -389,8 +455,42 @@
     cursor: pointer;
   }
 
-  .source-link.after-answer {
-    margin-top: 14px;
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    align-items: center;
+    margin-top: 28px;
+  }
+
+  .delete-trigger,
+  .delete-confirmation button {
+    border: 0;
+    padding: 5px 0;
+    color: var(--muted);
+    background: transparent;
+    font-size: 10px;
+    cursor: pointer;
+  }
+
+  .delete-trigger:hover,
+  .delete-confirmation .confirm-delete {
+    color: var(--danger);
+  }
+
+  .delete-confirmation {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .delete-confirmation > span {
+    color: var(--ink-soft);
+    font-size: 10px;
+  }
+
+  .delete-confirmation button:disabled {
+    opacity: 0.45;
   }
 
   .result {
@@ -507,6 +607,42 @@
     font-size: 11px;
     font-weight: 700;
     text-decoration: none;
+  }
+
+  .saved-drills {
+    display: grid;
+    width: 100%;
+    margin-top: 28px;
+    border-top: 1px solid var(--line);
+  }
+
+  .saved-drill {
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .saved-drill > div:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+  }
+
+  .saved-drill strong {
+    overflow: hidden;
+    color: var(--ink-soft);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .saved-drill small {
+    color: var(--muted);
+    font-size: 9px;
   }
 
   .spinner {

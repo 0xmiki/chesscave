@@ -14,6 +14,8 @@ export interface PatchSource {
   decisionPly: number;
   fen: string;
   orientation: PatchOrientation;
+  /** Explicit student identity for new cards; orientation is the legacy fallback. */
+  studentSide?: PatchOrientation;
   playedMove: PatchMove | null;
   clocks: { w: number | null; b: number | null };
 }

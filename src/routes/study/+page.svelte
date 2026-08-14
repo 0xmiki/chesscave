@@ -820,6 +820,21 @@
     patchError = "";
     patchDraft = null;
     patchSaved = false;
+
+    if (!conversionSide) {
+      patchError = playerUsername
+        ? `ChessCave cannot match ${playerUsername} to White or Black in this game, so it will not create a drill from the wrong perspective.`
+        : "Choose your Chess.com player before creating a drill so ChessCave knows whether you are White or Black.";
+      return;
+    }
+
+    const studentColor = conversionSide === "w" ? "White" : "Black";
+    const positionColor = sideToMove(patchDecision.fen);
+    if (positionColor !== studentColor) {
+      patchError = `You are ${studentColor}, but this position is ${positionColor} to move. Select one of your own moves before creating the drill.`;
+      return;
+    }
+
     patchGenerating = true;
 
     const proposedMove = legalPatchMove(patchDecision.fen, correction);
@@ -850,6 +865,7 @@
         decisionPly: patchDecision.decisionPly,
         fen: patchDecision.fen,
         orientation: patchOrientation,
+        studentSide: patchOrientation,
         playedMove: patchDecision.playedMove,
         clocks: patchDecision.clocks,
       };
@@ -872,6 +888,10 @@
       coachDetail = "Codex is designing the patch…";
       const prompt = [
         "Create one concise chess flashcard from the student's diagnosis.",
+        `NON-NEGOTIABLE PERSPECTIVE: the student is ${playerUsername}, playing ${studentColor}.`,
+        `This position is ${positionColor} to move, so the verified move belongs to the student, not the opponent.`,
+        "Write every reference to 'you', the mistake, the correction, and the lesson from the student's side only.",
+        "Never turn an opponent move, opponent plan, or opponent mistake into the student's drill.",
         "Return JSON only with exactly these string fields: prompt, explanation, principle.",
         "The prompt must ask the student to find a move without revealing it.",
         "The explanation must connect the student's mistake to the verified correction.",
@@ -886,11 +906,17 @@
         [
           `Mode: patch-card generation`,
           `Game: ${matchupTitle}`,
+          `Student username: ${playerUsername}`,
+          `Student side: ${studentColor}`,
+          `Opponent side: ${studentColor === "White" ? "Black" : "White"}`,
+          `Side to move in the drill position: ${positionColor}`,
+          "Perspective rule: produce a drill for the student side only; never ask the student to choose the opponent's move.",
           `Decision ply: ${patchDecision.decisionPly}`,
           `FEN: ${patchDecision.fen}`,
           `Verified best move: ${acceptedMove.san} (${acceptedMove.uci})`,
           `Principal variation: ${principalSan.join(" ") || "unavailable"}`,
         ].join("\n"),
+        "deliberate",
       );
     } catch (error) {
       if (pendingPatchInput) {

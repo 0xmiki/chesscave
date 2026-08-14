@@ -4,7 +4,9 @@ import type {
   NewPatchCardInput,
   PatchCard,
   PatchMove,
+  PatchOrientation,
   PatchReviewResult,
+  PatchSource,
 } from "./types";
 
 const MINUTE_MS = 60_000;
@@ -65,7 +67,19 @@ export function parseGeneratedPatchCopy(
   }
 }
 
+export function patchStudentSide(source: PatchSource): PatchOrientation {
+  return source.studentSide ?? source.orientation;
+}
+
+export function isPatchForStudentTurn(source: PatchSource): boolean {
+  const turn = new Chess(source.fen).turn() === "w" ? "white" : "black";
+  return patchStudentSide(source) === turn;
+}
+
 export function createPatchCard(input: NewPatchCardInput): PatchCard {
+  if (!isPatchForStudentTurn(input.source)) {
+    throw new Error("A patch can only be created from the student's turn.");
+  }
   const now = input.now ?? Date.now();
   return {
     schemaVersion: 1,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createPatchCard,
+  isPatchForStudentTurn,
   isAcceptedPatchMove,
   legalPatchMove,
   parseGeneratedPatchCopy,
@@ -43,6 +44,20 @@ describe("patch cards", () => {
     });
     expect(isAcceptedPatchMove(card, "g1f3")).toBe(true);
     expect(isAcceptedPatchMove(card, "e2e4")).toBe(false);
+  });
+
+  test("rejects a drill created from the opponent's turn", () => {
+    const wrongSideSource = { ...source, studentSide: "black" as const };
+    expect(isPatchForStudentTurn(source)).toBe(true);
+    expect(isPatchForStudentTurn(wrongSideSource)).toBe(false);
+    expect(() => createPatchCard({
+      source: wrongSideSource,
+      mistake: "I missed the center.",
+      proposedCorrection: "Play e4.",
+      acceptedMove: { uci: "e2e4", san: "e4" },
+      principalVariation: [],
+      generated: { prompt: "Find the move", explanation: "Play centrally.", principle: "Claim space." },
+    })).toThrow("student's turn");
   });
 
   test("parses bounded Codex JSON and falls back on malformed output", () => {
