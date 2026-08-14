@@ -8,6 +8,7 @@
   import GameSummary from "$lib/components/GameSummary.svelte";
   import MoveList from "$lib/components/MoveList.svelte";
   import MoveBadge from "$lib/components/MoveBadge.svelte";
+  import PatchComposer from "$lib/components/PatchComposer.svelte";
   import PlayerStrip from "$lib/components/PlayerStrip.svelte";
   import {
     createVariation,
@@ -30,6 +31,7 @@
     sideForUsername,
   } from "$lib/chess/conversion";
   import { buildReviewPresentation } from "$lib/chess/review";
+  import { evaluateVariationMove } from "$lib/chess/variation-review";
   import {
     deepestOpeningPly,
     loadOpeningBook,
@@ -43,10 +45,23 @@
     EngineStatus,
     GameReview,
     MoveClassification,
+    MoveReview,
     ReviewProgress,
     Side,
     VariationLine,
   } from "$lib/chess/types";
+  import {
+    createPatchCard,
+    legalPatchMove,
+    parseGeneratedPatchCopy,
+  } from "$lib/patches/patches";
+  import type {
+    GeneratedPatchCopy,
+    NewPatchCardInput,
+    PatchCard,
+    PatchSource,
+  } from "$lib/patches/types";
+  import { savePatchCard } from "$lib/services/patches";
   import {
     analyzePosition,
     getEngineStatus,
@@ -93,11 +108,21 @@
   let importOpen = $state(false);
   let pgnDraft = $state("");
   let importError = $state("");
-  let studyTab = $state<"review" | "coach">("review");
+  let studyTab = $state<"review" | "coach" | "patch">("review");
   let storageReady = $state(false);
   let openingBook = $state<OpeningBook | null>(null);
   let openingError = $state("");
   let playerUsername = $state("");
+  let autoOrientedGame = "";
+  let patchDraft = $state<PatchCard | null>(null);
+  let patchSaved = $state(false);
+  let patchReflections = $state<Record<string, { mistake: string; correction: string }>>({});
+  let patchGenerating = $state(false);
+  let patchSaving = $state(false);
+  let patchError = $state("");
+  let patchResponse = $state("");
+  let pendingPatchInput = $state<Omit<NewPatchCardInput, "generated"> | null>(null);
+  let previousPatchContext = "";
 
   const exploring = $derived(variation !== null && variationPly !== null);
   const snapshot = $derived(
@@ -135,7 +160,11 @@
       : currentPly < game.moves.length,
   );
   const variationPositionBusy = $derived(
-    exploring && Boolean(variationPending[snapshot.fen]),
+    exploring &&
+      Boolean(
+        variationPending[snapshot.fen] ||
+        variationPending[variation!.snapshots[Math.max(0, variationPly! - 1)].fen],
+      ),
   );
   const variationSnapshots = $derived.by(() =>
     variation
@@ -166,6 +195,28 @@
         )
       : 0,
   );
+  const variationMoveReviews = $derived.by((): Array<MoveReview | null> => {
+    if (!variation) return [];
+    return variation.moves.map((move, index) => {
+      const beforeSnapshot = variation!.snapshots[index];
+      const afterSnapshot = variation!.snapshots[index + 1];
+      const before =
+        (index === 0 ? review?.positions[variation!.rootPly] : null) ??
+        variationAnalyses[beforeSnapshot.fen] ??
+        null;
+      const after = variationAnalyses[afterSnapshot.fen] ?? null;
+      return evaluateVariationMove(
+        move,
+        variation!.rootPly + index + 1,
+        before,
+        after,
+        index + 1 <= variationBookThrough,
+      );
+    });
+  });
+  const currentVariationMoveReview = $derived(
+    exploring ? variationMoveReviews[variationPly! - 1] ?? null : null,
+  );
   const currentOpening = $derived(
     openingAt(
       openingBook,
@@ -176,14 +227,23 @@
   const currentMoveClassification = $derived.by(
     (): MoveClassification | null => {
       if (exploring) {
-        return variationPly! <= variationBookThrough ? "book" : null;
+        return currentVariationMoveReview?.classification ??
+          (variationPly! <= variationBookThrough ? "book" : null);
       }
       if (currentPly > 0 && currentPly <= mainlineBookThrough) return "book";
       return moveReview?.classification ?? null;
     },
   );
   const bestMoveArrow = $derived.by(() => {
-    if (exploring || currentPly <= 0 || !moveReview) return null;
+    if (exploring) {
+      if (!currentVariationMoveReview) return null;
+      return bestAlternativeArrow(
+        currentVariationMoveReview.uci,
+        currentVariationMoveReview.bestMove,
+        currentVariationMoveReview.classification === "book",
+      );
+    }
+    if (currentPly <= 0 || !moveReview) return null;
     return bestAlternativeArrow(
       moveReview.uci,
       moveReview.bestMove,
@@ -191,7 +251,15 @@
     );
   });
   const bestAlternativeSan = $derived.by(() => {
-    if (!bestMoveArrow || currentPly <= 0) return null;
+    if (!bestMoveArrow) return null;
+    if (exploring && currentVariationMoveReview) {
+      return (
+        uciLineToSan(variation!.snapshots[variationPly! - 1].fen, [
+          currentVariationMoveReview.bestMove!,
+        ])[0] ?? currentVariationMoveReview.bestMove
+      );
+    }
+    if (currentPly <= 0) return null;
     return (
       uciLineToSan(game.snapshots[currentPly - 1].fen, [
         moveReview!.bestMove!,
@@ -224,11 +292,85 @@
     snapshot.fen.split(/\s+/)[1] === "b" ? "b" : "w",
   );
   const conversionSide = $derived(sideForUsername(game, playerUsername));
+  const coachIdentityLabel = $derived(
+    conversionSide === "w"
+      ? "You are White"
+      : conversionSide === "b"
+        ? "You are Black"
+        : "Player side unknown",
+  );
   const conversionExercises = $derived(
     review && conversionSide
       ? findConversionExercises(game, review, conversionSide)
       : [],
   );
+  const patchDecision = $derived.by(() => {
+    if (exploring) {
+      const moveIndex = variationPly! - 1;
+      const decisionPly = variation!.rootPly + moveIndex;
+      const decisionSnapshot = variation!.snapshots[moveIndex];
+      const played = variation!.moves[moveIndex];
+      const analysis =
+        (moveIndex === 0 ? review?.positions[variation!.rootPly] : null) ??
+        variationAnalyses[decisionSnapshot.fen] ??
+        null;
+      return {
+        key: `${decisionSnapshot.fen}:${played.from}${played.to}${played.promotion ?? ""}:variation`,
+        decisionPly,
+        fen: decisionSnapshot.fen,
+        clocks: decisionSnapshot.clocks,
+        label: variationPositionLabel(variation!, variationPly!),
+        playedMove: {
+          uci: `${played.from}${played.to}${played.promotion ?? ""}`,
+          san: played.san,
+        },
+        bestMove: analysis?.bestMove ?? null,
+        principalVariation: analysis?.lines[0]?.moves ?? [],
+      };
+    }
+
+    const decisionPly = Math.max(0, currentPly - (currentPly > 0 ? 1 : 0));
+    const decisionSnapshot = game.snapshots[decisionPly];
+    const played = currentPly > 0 ? game.moves[currentPly - 1] : null;
+    const reviewedMove = currentPly > 0 ? reviewMoves[currentPly - 1] ?? null : null;
+    const reviewedPosition = review?.positions[decisionPly] ?? null;
+    const playedMove = played
+      ? {
+          uci: `${played.from}${played.to}${played.promotion ?? ""}`,
+          san: played.san,
+        }
+      : null;
+    return {
+      key: `${decisionSnapshot.fen}:${playedMove?.uci ?? "position"}`,
+      decisionPly,
+      fen: decisionSnapshot.fen,
+      clocks: decisionSnapshot.clocks,
+      label: positionLabel(game, decisionPly),
+      playedMove,
+      bestMove: reviewedMove?.bestMove ?? reviewedPosition?.bestMove ?? null,
+      principalVariation: reviewedPosition?.lines[0]?.moves ?? [],
+    };
+  });
+  const patchOrientation = $derived<"white" | "black">(
+    conversionSide === "b" ? "black" : conversionSide === "w" ? "white" : flipped ? "black" : "white",
+  );
+
+  $effect(() => {
+    if (!storageReady || !conversionSide) return;
+    const gameKey = `${playerUsername.trim().toLowerCase()}:${game.pgn}`;
+    if (gameKey === autoOrientedGame) return;
+    autoOrientedGame = gameKey;
+    flipped = conversionSide === "b";
+  });
+
+  $effect(() => {
+    if (patchDecision.key === previousPatchContext) return;
+    previousPatchContext = patchDecision.key;
+    patchDraft = null;
+    patchSaved = false;
+    patchError = "";
+    pendingPatchInput = null;
+  });
 
   $effect(() => {
     if (!storageReady || typeof localStorage === "undefined") return;
@@ -330,7 +472,7 @@
     if (!variation) return;
     variationPly = Math.max(1, Math.min(variation.moves.length, ply));
     selected = null;
-    void requestVariationAnalysis(variation.snapshots[variationPly].fen);
+    void requestVariationMoveFeedback(variation, variationPly);
   }
 
   function sameMove(
@@ -374,14 +516,14 @@
         if (!nextVariation) return;
         variation = nextVariation;
         variationPly = 1;
-        void requestVariationAnalysis(nextVariation.snapshots[1].fen);
+        void requestVariationMoveFeedback(nextVariation, 1);
         return;
       }
 
       const existingMove = variation!.moves[variationPly!];
       if (existingMove && sameMove(existingMove, from, square)) {
         variationPly = variationPly! + 1;
-        void requestVariationAnalysis(variation!.snapshots[variationPly!].fen);
+        void requestVariationMoveFeedback(variation!, variationPly!);
         return;
       }
 
@@ -394,7 +536,7 @@
       if (!nextVariation) return;
       variation = nextVariation;
       variationPly = variationPly! + 1;
-      void requestVariationAnalysis(nextVariation.snapshots[variationPly!].fen);
+      void requestVariationMoveFeedback(nextVariation, variationPly!);
       return;
     }
 
@@ -417,6 +559,17 @@
       const { [fen]: _completed, ...remaining } = variationPending;
       variationPending = remaining;
     }
+  }
+
+  async function requestVariationMoveFeedback(line: VariationLine, ply: number) {
+    if (ply < 1 || ply > line.moves.length) return;
+    const before = line.snapshots[ply - 1];
+    const after = line.snapshots[ply];
+    const beforeAlreadyReviewed = ply === 1 && Boolean(review?.positions[line.rootPly]);
+    await Promise.all([
+      beforeAlreadyReviewed ? Promise.resolve() : requestVariationAnalysis(before.fen),
+      requestVariationAnalysis(after.fen),
+    ]);
   }
 
   function stepBackward() {
@@ -555,10 +708,22 @@
       : currentPly;
     const recentConversation = coachMessages
       .slice(-6)
-      .map((item) => `${item.role === "user" ? "Student" : "Sol"}: ${item.text}`)
+      .map((item) => `${item.role === "user" ? playerUsername || "Student" : "Sol"}: ${item.text}`)
       .join("\n");
     return [
       `Game: ${game.headers.White || "White"} vs ${game.headers.Black || "Black"}`,
+      ...(conversionSide
+        ? [
+            `Student username: ${playerUsername}`,
+            `Student identity: ${playerUsername} is playing ${conversionSide === "w" ? "White" : "Black"} in this game. Treat that side as "you" and coach from the student's perspective.`,
+          ]
+        : playerUsername
+          ? [
+              `Stored student username: ${playerUsername}`,
+              "Student identity: the stored username does not match either PGN player. Do not assume which side is the student.",
+            ]
+          : ["Student identity: no username is available. Do not assume which side is the student."]),
+      "Response style: answer the question directly, then explain the chess idea in short readable sections. Use SAN for moves, use bullets only when they improve clarity, and distinguish Stockfish evidence from coaching interpretation. Avoid generic praise and repeated position metadata.",
       ...(review
         ? [
             `Completed whole-game review key: ${review.gameKey}`,
@@ -617,6 +782,165 @@
       coachDetail = String(error);
       coachActivity = null;
     }
+  }
+
+  function patchFallback(
+    mistake: string,
+    acceptedSan: string,
+    playedSan: string | null,
+  ): GeneratedPatchCopy {
+    return {
+      prompt: playedSan
+        ? `You played ${playedSan}. Find the move that patches the mistake.`
+        : "Find the move you want to recognize in this position.",
+      explanation: `${mistake.trim()} The corrective move is ${acceptedSan}.`,
+      principle: "Pause, identify the opponent’s resources, and compare forcing moves before committing.",
+    };
+  }
+
+  function finishPatchGeneration(response = "") {
+    if (!pendingPatchInput) return;
+    const acceptedSan = pendingPatchInput.acceptedMove.san;
+    const fallback = patchFallback(
+      pendingPatchInput.mistake,
+      acceptedSan,
+      pendingPatchInput.source.playedMove?.san ?? null,
+    );
+    patchDraft = createPatchCard({
+      ...pendingPatchInput,
+      generated: parseGeneratedPatchCopy(response, fallback),
+    });
+    pendingPatchInput = null;
+    patchGenerating = false;
+    patchResponse = "";
+  }
+
+  async function generatePatch(mistake: string, correction: string) {
+    if (patchGenerating) return;
+    patchError = "";
+    patchDraft = null;
+    patchSaved = false;
+    patchGenerating = true;
+
+    const proposedMove = legalPatchMove(patchDecision.fen, correction);
+    let bestMove = patchDecision.bestMove;
+    let principalVariation = patchDecision.principalVariation;
+    try {
+      if (!bestMove && engine.available) {
+        const analysis = await analyzePosition(patchDecision.fen, 18, 3);
+        bestMove = analysis.bestMove;
+        principalVariation = analysis.lines[0]?.moves ?? [];
+      }
+      const acceptedMove = bestMove
+        ? legalPatchMove(patchDecision.fen, bestMove)
+        : proposedMove;
+      if (!acceptedMove) {
+        throw new Error(
+          proposedMove
+            ? "ChessCave could not verify a correct move for this position."
+            : "Enter a legal move such as Nf3 or g1f3 so the answer can be verified.",
+        );
+      }
+
+      const source: PatchSource = {
+        gameKey: review?.gameKey ?? null,
+        sourceUrl,
+        gameTitle: matchupTitle,
+        pgn: game.pgn,
+        decisionPly: patchDecision.decisionPly,
+        fen: patchDecision.fen,
+        orientation: patchOrientation,
+        playedMove: patchDecision.playedMove,
+        clocks: patchDecision.clocks,
+      };
+      const principalSan = uciLineToSan(patchDecision.fen, principalVariation).slice(0, 8);
+      pendingPatchInput = {
+        source,
+        mistake: mistake.trim(),
+        proposedCorrection: correction.trim(),
+        acceptedMove,
+        principalVariation: principalSan,
+      };
+
+      if (coachStatus !== "ready") {
+        finishPatchGeneration();
+        return;
+      }
+
+      patchResponse = "";
+      coachStatus = "thinking";
+      coachDetail = "Codex is designing the patch…";
+      const prompt = [
+        "Create one concise chess flashcard from the student's diagnosis.",
+        "Return JSON only with exactly these string fields: prompt, explanation, principle.",
+        "The prompt must ask the student to find a move without revealing it.",
+        "The explanation must connect the student's mistake to the verified correction.",
+        "The principle must be a short reusable thinking rule, not a slogan.",
+        `Student's mistake: ${mistake.trim()}`,
+        `Student's proposed correction: ${correction.trim()}`,
+        `Verified move: ${acceptedMove.san} (${acceptedMove.uci})`,
+        `Move originally played: ${patchDecision.playedMove?.san ?? "none"}`,
+      ].join("\n");
+      await sendCoachMessage(
+        prompt,
+        [
+          `Mode: patch-card generation`,
+          `Game: ${matchupTitle}`,
+          `Decision ply: ${patchDecision.decisionPly}`,
+          `FEN: ${patchDecision.fen}`,
+          `Verified best move: ${acceptedMove.san} (${acceptedMove.uci})`,
+          `Principal variation: ${principalSan.join(" ") || "unavailable"}`,
+        ].join("\n"),
+      );
+    } catch (error) {
+      if (pendingPatchInput) {
+        finishPatchGeneration();
+        patchError = "Codex was unavailable, so ChessCave built a verified local draft.";
+      } else {
+        patchGenerating = false;
+        patchError = error instanceof Error ? error.message : String(error);
+      }
+    }
+  }
+
+  async function saveCurrentPatch() {
+    if (!patchDraft || patchSaving) return;
+    const cardToSave = patchDraft;
+    const contextKey = patchDecision.key;
+    patchSaving = true;
+    patchError = "";
+    try {
+      await savePatchCard(cardToSave);
+      if (patchDecision.key === contextKey) {
+        patchDraft = null;
+        patchSaved = true;
+      }
+      patchReflections = {
+        ...patchReflections,
+        [contextKey]: { mistake: "", correction: "" },
+      };
+    } catch (error) {
+      patchError = error instanceof Error ? error.message : String(error);
+    } finally {
+      patchSaving = false;
+    }
+  }
+
+  function resetPatchDraft() {
+    patchDraft = null;
+    patchSaved = false;
+    patchError = "";
+  }
+
+  function rememberPatchReflection(
+    contextKey: string,
+    mistake: string,
+    correction: string,
+  ) {
+    patchReflections = {
+      ...patchReflections,
+      [contextKey]: { mistake, correction },
+    };
   }
 
   async function startNewCoachConversation() {
@@ -687,6 +1011,10 @@
 
     if (event.error) {
       const error = event.error as Record<string, unknown>;
+      if (patchGenerating && pendingPatchInput) {
+        finishPatchGeneration();
+        patchError = "Codex could not finish, so ChessCave built a verified local draft.";
+      }
       coachStatus = "error";
       coachDetail = String(error.message ?? "Codex app-server error");
       coachActivity = null;
@@ -701,6 +1029,13 @@
     }
 
     if (method === "chesscave/error") {
+      if (patchGenerating && pendingPatchInput) {
+        finishPatchGeneration();
+        patchError = "Codex stopped, so ChessCave built a verified local draft.";
+        coachStatus = "error";
+        coachDetail = String(params.message ?? "Codex app-server stopped");
+        return;
+      }
       coachStatus = "error";
       coachDetail = String(params.message ?? "Codex app-server stopped");
       coachActivity = null;
@@ -740,6 +1075,7 @@
         coachDetail = coachActivity.label;
       }
       if (item?.type === "agentMessage") {
+        if (patchGenerating) return;
         coachActivity = {
           kind: "replying",
           label: "Writing a response",
@@ -758,6 +1094,10 @@
     }
 
     if (method === "item/agentMessage/delta") {
+      if (patchGenerating) {
+        patchResponse += String(params.delta ?? "");
+        return;
+      }
       coachActivity = {
         kind: "replying",
         label: "Writing a response",
@@ -780,6 +1120,10 @@
 
     if (method === "item/completed") {
       const item = params.item as Record<string, unknown> | undefined;
+      if (item?.type === "agentMessage" && patchGenerating) {
+        if (!patchResponse && typeof item.text === "string") patchResponse = item.text;
+        return;
+      }
       if (item?.type === "mcpToolCall") {
         const itemId = String(item.id ?? "");
         const { [itemId]: _completed, ...remaining } = activeCoachTools;
@@ -811,6 +1155,7 @@
     }
 
     if (method === "turn/completed") {
+      if (patchGenerating) finishPatchGeneration(patchResponse);
       for (const message of coachMessages) message.pending = false;
       coachStatus = "ready";
       coachDetail = "Current position synced";
@@ -970,6 +1315,7 @@
             reviews={reviewMoves}
             {variation}
             {variationPly}
+            variationReviews={variationMoveReviews}
             bookThroughPly={mainlineBookThrough}
             {variationBookThrough}
             {currentPly}
@@ -1006,6 +1352,13 @@
               aria-selected={studyTab === "coach"}
               onclick={() => (studyTab = "coach")}
             >Coach</button>
+            <button
+              class:active={studyTab === "patch"}
+              type="button"
+              role="tab"
+              aria-selected={studyTab === "patch"}
+              onclick={() => (studyTab = "patch")}
+            >Patch</button>
           </div>
         </header>
 
@@ -1109,16 +1462,37 @@
             <div class="engine-notice">This game has not been reviewed yet.</div>
             {/if}
           </div>
-        {:else}
+        {:else if studyTab === "coach"}
           <CoachSidebar
             messages={coachMessages}
             status={coachStatus}
             detail={coachDetail}
             activity={coachActivity}
-            contextLabel={`${currentLabel}${review ? " · Full-game review loaded" : ""}`}
+            contextLabel={`${currentLabel} · ${coachIdentityLabel}${review ? " · Reviewed" : ""}`}
             busy={coachStatus === "thinking"}
             onSend={askCoach}
             onNewConversation={startNewCoachConversation}
+          />
+        {:else}
+          <PatchComposer
+            contextKey={patchDecision.key}
+            fen={patchDecision.fen}
+            orientation={patchOrientation}
+            positionLabel={patchDecision.label}
+            playedMove={patchDecision.playedMove?.san ?? null}
+            engineMove={patchDecision.bestMove}
+            draft={patchDraft}
+            saved={patchSaved}
+            busy={patchGenerating}
+            saving={patchSaving}
+            error={patchError}
+            initialMistake={patchReflections[patchDecision.key]?.mistake ?? ""}
+            initialCorrection={patchReflections[patchDecision.key]?.correction ?? ""}
+            onGenerate={generatePatch}
+            onSave={saveCurrentPatch}
+            onReset={resetPatchDraft}
+            onDraftChange={(mistake, correction) =>
+              rememberPatchReflection(patchDecision.key, mistake, correction)}
           />
         {/if}
       </section>

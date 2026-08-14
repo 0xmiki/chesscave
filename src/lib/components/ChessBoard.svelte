@@ -30,6 +30,7 @@
     legalTargets = [],
     annotation = null,
     engineArrow = null,
+    compact = false,
     onSquareClick,
   }: {
     fen: string;
@@ -39,6 +40,7 @@
     legalTargets?: string[];
     annotation?: MoveClassification | null;
     engineArrow?: BoardArrow | null;
+    compact?: boolean;
     onSquareClick: (square: string) => void;
   } = $props();
 
@@ -109,7 +111,7 @@
     fromRects: Map<string, { left: number; top: number }>,
     cycle: number,
   ) {
-    if (!previous.length || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (compact || !previous.length || matchMedia("(prefers-reduced-motion: reduce)").matches) {
       return;
     }
     await tick();
@@ -359,10 +361,11 @@
 </script>
 
 <div
+  class:compact
   class="board"
-  role="group"
-  aria-label="Chess board"
-  title="Right-drag to draw · Shift green · Ctrl red · Alt blue · left-click to clear"
+  role={compact ? "img" : "group"}
+  aria-label={compact ? "Saved chess position" : "Chess board"}
+  title={compact ? undefined : "Right-drag to draw · Shift green · Ctrl red · Alt blue · left-click to clear"}
   bind:this={boardElement}
   onpointerdown={handlePointerDown}
   onpointermove={handlePointerMove}
@@ -385,6 +388,7 @@
           class:occupied={Boolean(piece)}
           class="square"
           type="button"
+          tabindex={compact ? -1 : undefined}
           aria-label={`${square}${piece ? `, ${piece.color === "w" ? "white" : "black"} ${piece.type}` : ""}`}
           onclick={() => onSquareClick(square)}
         >
@@ -482,6 +486,17 @@
     box-shadow:
       0 0 0 1px rgba(58, 49, 42, 0.12),
       0 18px 42px rgba(73, 57, 44, 0.16);
+  }
+
+  .board.compact {
+    border-radius: 3px;
+    box-shadow: none;
+    pointer-events: none;
+  }
+
+  .compact .rank-coordinate,
+  .compact .file-coordinate {
+    display: none;
   }
 
   .squares {

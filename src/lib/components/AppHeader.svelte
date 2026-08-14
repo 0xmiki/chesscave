@@ -8,7 +8,7 @@
     subtitle = "",
     actions,
   }: {
-    active: "home" | "play" | "study" | "notes";
+    active: "home" | "play" | "study" | "drill" | "notes";
     title: string;
     subtitle?: string;
     actions?: Snippet;
@@ -27,6 +27,7 @@
     <a class:active={active === "home"} href="/">Home</a>
     <a class:active={active === "play"} href="/play/codex">Play</a>
     <a class:active={active === "study"} href="/study">Study</a>
+    <a class:active={active === "drill"} href="/drill">Drill</a>
     <a class:active={active === "notes"} href="/notes">Notes</a>
   </nav>
 

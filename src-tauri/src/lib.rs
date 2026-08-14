@@ -2,6 +2,7 @@ mod chess_com;
 mod codex;
 mod engine;
 mod notes;
+mod patches;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +19,9 @@ pub fn run() {
             notes::notes_load_sidebar,
             notes::notes_load_page,
             notes::notes_apply_transaction,
+            patches::patches_save,
+            patches::patches_list,
+            patches::patches_delete,
             codex::coach_start,
             codex::coach_interrupt,
             codex::coach_new_thread,

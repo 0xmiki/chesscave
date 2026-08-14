@@ -12,6 +12,7 @@
     reviews = [],
     variation = null,
     variationPly = null,
+    variationReviews = [],
     bookThroughPly = 0,
     variationBookThrough = 0,
     currentPly,
@@ -22,6 +23,7 @@
     reviews?: MoveReview[];
     variation?: VariationLine | null;
     variationPly?: number | null;
+    variationReviews?: Array<MoveReview | null>;
     bookThroughPly?: number;
     variationBookThrough?: number;
     currentPly: number;
@@ -60,6 +62,16 @@
     const move = reviewByPly.get(ply);
     if (!move) return undefined;
     return `${move.classification} · ${move.expectedPointsLost.toFixed(3)} expected points lost`;
+  }
+
+  function variationMoveTitle(index: number): string {
+    const move = variationReviews[index];
+    if (!move) return "Analyzing exploratory move…";
+    if (move.classification === "book") return "Book move · Lichess opening database";
+    const alternative = move.bestMove && move.bestMove !== move.uci
+      ? ` · best ${move.bestMove}`
+      : "";
+    return `${move.classification} · ${(move.expectedPointsLost * 100).toFixed(1)} Win% lost${alternative}`;
   }
 </script>
 
@@ -105,13 +117,17 @@
             class:active={variationPly === index + 1}
             type="button"
             aria-current={variationPly === index + 1 ? "step" : undefined}
-            title="Exploratory move — click any game move above to return to the match"
+            title={variationMoveTitle(index)}
             onclick={() => onSelectVariation(index + 1)}
           >
             <small>{variationMoveLabel(index)}</small>
             <span>{move.san}</span>
-            {#if index + 1 <= variationBookThrough}
+            {#if variationReviews[index]?.classification}
+              <MoveBadge kind={variationReviews[index]!.classification} compact />
+            {:else if index + 1 <= variationBookThrough}
               <MoveBadge kind="book" compact />
+            {:else}
+              <span class="analysis-pending" aria-label="Move analysis pending"></span>
             {/if}
           </button>
         {/each}
@@ -284,6 +300,13 @@
 
   .variation-moves button.active small {
     color: var(--pearl);
+  }
+
+  .analysis-pending {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--faint);
   }
 
 </style>

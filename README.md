@@ -21,6 +21,8 @@ The first milestone includes:
   accuracy;
 - a calm, day-grouped game history on Home, with any game opening directly in
   Study and no ranking layer between the player and their games;
+- position-bound patch cards created from a player's own diagnosis, verified
+  by Stockfish, shaped into concise quiz copy by Codex, and practiced in Drill;
 - a local read-only MCP server for engine analysis, whole-game review, and
   clock-addressable PNG board images;
 - a streamed Codex app-server sidebar with live thinking, MCP, waiting, and
