@@ -64,6 +64,7 @@
   import { savePatchCard } from "$lib/services/patches";
   import {
     analyzePosition,
+    getCoachConnectionStatus,
     getEngineStatus,
     hasNativeHost,
     newCoachThread,
@@ -72,7 +73,9 @@
     reviewGame,
     sendCoachMessage,
     startCoach,
+    stopCoach,
   } from "$lib/services/native";
+  import type { CoachConnectionSnapshot } from "$lib/services/native";
 
   let game = $state(parsePgn(SAMPLE_PGN));
   let sourceUrl = $state<string | null>(null);
@@ -105,6 +108,8 @@
   let coachMessages = $state<CoachMessage[]>([]);
   let coachActivity = $state<CoachActivity | null>(null);
   let activeCoachTools = $state<Record<string, string>>({});
+  let coachStartAttempts = 0;
+  let coachStartupTimer: number | null = null;
   let importOpen = $state(false);
   let pgnDraft = $state("");
   let importError = $state("");
@@ -388,6 +393,79 @@
     );
   });
 
+  function clearCoachStartupTimer() {
+    if (coachStartupTimer !== null) window.clearTimeout(coachStartupTimer);
+    coachStartupTimer = null;
+  }
+
+  function applyCoachConnection(snapshot: CoachConnectionSnapshot) {
+    if (snapshot.status === "ready") {
+      clearCoachStartupTimer();
+      coachStartAttempts = 0;
+      coachStatus = "ready";
+      coachDetail = "Current position synced";
+      return;
+    }
+    coachStatus = snapshot.status;
+    coachDetail = snapshot.detail;
+    coachActivity = null;
+  }
+
+  function scheduleCoachStartupCheck() {
+    clearCoachStartupTimer();
+    coachStartupTimer = window.setTimeout(() => {
+      coachStartupTimer = null;
+      void (async () => {
+        try {
+          const snapshot = await getCoachConnectionStatus();
+          if (snapshot.status === "ready") {
+            applyCoachConnection(snapshot);
+          } else if (coachStartAttempts < 2) {
+            await connectCoach(true);
+          } else {
+            applyCoachConnection({
+              status: "error",
+              detail: snapshot.detail || "Codex could not finish starting.",
+            });
+          }
+        } catch (error) {
+          coachStatus = "error";
+          coachDetail = String(error);
+        }
+      })();
+    }, 17_500);
+  }
+
+  async function connectCoach(restart = false) {
+    if (!hasNativeHost()) return;
+    clearCoachStartupTimer();
+    coachStartAttempts += 1;
+    coachStatus = "starting";
+    coachDetail = restart ? "Reconnecting Codex…" : "Starting Codex app-server…";
+    coachActivity = null;
+    try {
+      if (restart) await stopCoach();
+      const snapshot = await startCoach();
+      applyCoachConnection(snapshot);
+      if (snapshot.status === "starting") {
+        scheduleCoachStartupCheck();
+      } else if (snapshot.status === "error" && coachStartAttempts < 2) {
+        coachStartupTimer = window.setTimeout(() => {
+          coachStartupTimer = null;
+          void connectCoach(true);
+        }, 700);
+      }
+    } catch (error) {
+      coachStatus = "error";
+      coachDetail = String(error);
+    }
+  }
+
+  function retryCoach() {
+    coachStartAttempts = 0;
+    void connectCoach(true);
+  }
+
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -445,18 +523,12 @@
 
       if (!hasNativeHost()) return;
       unlisten = await onCoachEvent(handleCoachEvent);
-      try {
-        await startCoach();
-      } catch (error) {
-        if (!disposed) {
-          coachStatus = "error";
-          coachDetail = String(error);
-        }
-      }
+      if (!disposed) await connectCoach();
     })();
 
     return () => {
       disposed = true;
+      clearCoachStartupTimer();
       unlisten?.();
       unlistenReview?.();
     };
@@ -1030,6 +1102,8 @@
     const params = (event.params ?? {}) as Record<string, unknown>;
 
     if (event.id === 1 && event.result) {
+      clearCoachStartupTimer();
+      coachStartAttempts = 0;
       coachStatus = "ready";
       coachDetail = "Current position synced";
       return;
@@ -1049,6 +1123,8 @@
     }
 
     if (method === "chesscave/ready") {
+      clearCoachStartupTimer();
+      coachStartAttempts = 0;
       coachStatus = "ready";
       coachDetail = "Current position synced";
       return;
@@ -1060,6 +1136,16 @@
         patchError = "Codex stopped, so ChessCave built a verified local draft.";
         coachStatus = "error";
         coachDetail = String(params.message ?? "Codex app-server stopped");
+        return;
+      }
+      if (params.retryable === true && coachStartAttempts < 2) {
+        clearCoachStartupTimer();
+        coachStatus = "starting";
+        coachDetail = "Codex took too long. Reconnecting…";
+        coachStartupTimer = window.setTimeout(() => {
+          coachStartupTimer = null;
+          void connectCoach(true);
+        }, 700);
         return;
       }
       coachStatus = "error";
@@ -1498,6 +1584,7 @@
             busy={coachStatus === "thinking"}
             onSend={askCoach}
             onNewConversation={startNewCoachConversation}
+            onRetry={retryCoach}
           />
         {:else}
           <PatchComposer

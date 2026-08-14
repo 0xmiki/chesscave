@@ -10,6 +10,13 @@ import type {
 } from "$lib/chess/types";
 import type { ChessComDashboard } from "$lib/chess/chesscom";
 
+export type CoachConnectionStatus = "offline" | "starting" | "ready" | "error";
+
+export interface CoachConnectionSnapshot {
+  status: CoachConnectionStatus;
+  detail: string;
+}
+
 export function hasNativeHost(): boolean {
   return isTauri();
 }
@@ -101,8 +108,12 @@ export function onReviewProgress(
   });
 }
 
-export async function startCoach(): Promise<void> {
-  await invoke("coach_start");
+export async function getCoachConnectionStatus(): Promise<CoachConnectionSnapshot> {
+  return invoke<CoachConnectionSnapshot>("coach_status");
+}
+
+export async function startCoach(): Promise<CoachConnectionSnapshot> {
+  return invoke<CoachConnectionSnapshot>("coach_start");
 }
 
 export async function stopCoach(): Promise<void> {

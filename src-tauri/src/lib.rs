@@ -22,6 +22,7 @@ pub fn run() {
             patches::patches_save,
             patches::patches_list,
             patches::patches_delete,
+            codex::coach_status,
             codex::coach_start,
             codex::coach_interrupt,
             codex::coach_new_thread,

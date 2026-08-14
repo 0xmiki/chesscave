@@ -1,10 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { hasNativeHost, startCoach } from "$lib/services/native";
   import "../app.css";
 
   let { children } = $props();
 
   onMount(() => {
+    if (hasNativeHost()) {
+      void startCoach().catch(() => {
+        // Feature routes surface connection errors and provide recovery controls.
+      });
+    }
+
     const onWheel = (event: WheelEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.deltaY === 0) return;
 

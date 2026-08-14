@@ -297,7 +297,18 @@
     coachStartAttempts += 1;
     try {
       if (restart) await stopCoach();
-      await startCoach();
+      const snapshot = await startCoach();
+      if (snapshot.status === "ready") {
+        codexReady = true;
+        coachUnavailable = false;
+        coachStartAttempts = 0;
+        clearCoachTimers();
+        drainCoachQueue();
+        return;
+      }
+      if (snapshot.status === "error" || snapshot.status === "offline") {
+        throw new Error(snapshot.detail);
+      }
       if (coachReadyTimer !== null) window.clearTimeout(coachReadyTimer);
       coachReadyTimer = window.setTimeout(() => {
         coachReadyTimer = null;

@@ -12,6 +12,7 @@
     busy,
     onSend,
     onNewConversation,
+    onRetry,
   }: {
     messages: CoachMessage[];
     status: "offline" | "starting" | "ready" | "thinking" | "error";
@@ -21,6 +22,7 @@
     busy: boolean;
     onSend: (message: string) => void;
     onNewConversation: () => void;
+    onRetry: () => void;
   } = $props();
 
   let draft = $state("");
@@ -281,7 +283,9 @@
     <div class="input-meta" id="coach-composer-meta">
       <span class={`live-dot ${status}`}></span>
       <span class="composer-state">{composerStatus}</span>
-      {#if draft.length > maximumMessageLength * 0.8}
+      {#if status === "error"}
+        <button class="retry-coach" type="button" onclick={onRetry}>Retry coach</button>
+      {:else if draft.length > maximumMessageLength * 0.8}
         <span class="character-count">{draft.length}/{maximumMessageLength}</span>
       {:else}
         <span class="keyboard-hint"><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> new line</span>
@@ -757,6 +761,22 @@ p {
 .coach-error span {
   font-size: 10px;
   line-height: 1.4;
+}
+
+.retry-coach {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+  color: var(--coral-dark);
+  background: transparent;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.retry-coach:hover {
+  text-decoration: underline;
 }
 
 .latest {

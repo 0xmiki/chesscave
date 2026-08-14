@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     env,
@@ -10,6 +11,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
     sync::Mutex,
+    time::{sleep, Duration},
 };
 
 #[derive(Clone, Default)]
@@ -24,6 +26,42 @@ struct CoachInner {
     thread_id: Option<String>,
     pending_thread_start_id: Option<u64>,
     next_id: u64,
+    generation: u64,
+    last_error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoachConnectionSnapshot {
+    status: String,
+    detail: String,
+}
+
+const COACH_STARTUP_TIMEOUT_SECONDS: u64 = 16;
+
+fn coach_snapshot(inner: &CoachInner) -> CoachConnectionSnapshot {
+    if inner.thread_id.is_some() {
+        return CoachConnectionSnapshot {
+            status: "ready".to_string(),
+            detail: "Coach ready".to_string(),
+        };
+    }
+    if let Some(error) = &inner.last_error {
+        return CoachConnectionSnapshot {
+            status: "error".to_string(),
+            detail: error.clone(),
+        };
+    }
+    if inner.child.is_some() {
+        return CoachConnectionSnapshot {
+            status: "starting".to_string(),
+            detail: "Starting Codex app-server…".to_string(),
+        };
+    }
+    CoachConnectionSnapshot {
+        status: "offline".to_string(),
+        detail: "Codex app-server is not running.".to_string(),
+    }
 }
 
 const COACH_INSTRUCTIONS: &str = concat!(
@@ -168,6 +206,7 @@ async fn write_message(stdin: &mut ChildStdin, message: &Value) -> Result<(), St
 async fn emit_reader_events(
     app: AppHandle,
     state: CoachState,
+    generation: u64,
     stdout: tokio::process::ChildStdout,
 ) {
     let mut lines = BufReader::new(stdout).lines();
@@ -176,9 +215,19 @@ async fn emit_reader_events(
         match lines.next_line().await {
             Ok(Some(line)) => match serde_json::from_str::<Value>(&line) {
                 Ok(message) => {
+                    let current = {
+                        let inner = state.inner.lock().await;
+                        inner.generation == generation
+                    };
+                    if !current {
+                        continue;
+                    }
+
                     if let Some(response_id) = message.get("id").and_then(Value::as_u64) {
                         let mut inner = state.inner.lock().await;
-                        if inner.pending_thread_start_id == Some(response_id) {
+                        if inner.generation == generation
+                            && inner.pending_thread_start_id == Some(response_id)
+                        {
                             inner.pending_thread_start_id = None;
                             if let Some(thread_id) = message
                                 .pointer("/result/thread/id")
@@ -186,6 +235,7 @@ async fn emit_reader_events(
                                 .map(str::to_string)
                             {
                                 inner.thread_id = Some(thread_id);
+                                inner.last_error = None;
                                 drop(inner);
                                 let _ = app.emit(
                                     "chesscave://coach-event",
@@ -195,17 +245,19 @@ async fn emit_reader_events(
                                     }),
                                 );
                             } else {
-                                drop(inner);
                                 let detail = message
                                     .get("error")
                                     .and_then(|error| error.get("message"))
                                     .and_then(Value::as_str)
-                                    .unwrap_or("Codex could not create a coaching thread.");
+                                    .unwrap_or("Codex could not create a coaching thread.")
+                                    .to_string();
+                                inner.last_error = Some(detail.clone());
+                                drop(inner);
                                 let _ = app.emit(
                                     "chesscave://coach-event",
                                     json!({
                                         "method": "chesscave/error",
-                                        "params": { "message": detail }
+                                        "params": { "message": detail, "retryable": true }
                                     }),
                                 );
                             }
@@ -229,31 +281,86 @@ async fn emit_reader_events(
             },
             Ok(None) => break,
             Err(error) => {
-                let _ = app.emit(
-                    "chesscave://coach-event",
-                    json!({
-                        "method": "chesscave/error",
-                        "params": {
-                            "message": format!("Lost the Codex app-server stream: {error}")
-                        }
-                    }),
-                );
+                let current = {
+                    let inner = state.inner.lock().await;
+                    inner.generation == generation
+                };
+                if current {
+                    let _ = app.emit(
+                        "chesscave://coach-event",
+                        json!({
+                            "method": "chesscave/error",
+                            "params": {
+                                "message": format!("Lost the Codex app-server stream: {error}"),
+                                "retryable": true
+                            }
+                        }),
+                    );
+                }
                 break;
             }
         }
     }
 
     let mut inner = state.inner.lock().await;
+    if inner.generation != generation {
+        return;
+    }
     inner.child = None;
     inner.stdin = None;
     inner.thread_id = None;
     inner.pending_thread_start_id = None;
+    inner.last_error = Some("Codex app-server stopped.".to_string());
+    drop(inner);
     let _ = app.emit(
         "chesscave://coach-event",
         json!({
             "method": "chesscave/error",
             "params": {
-                "message": "Codex app-server stopped."
+                "message": "Codex app-server stopped.",
+                "retryable": true
+            }
+        }),
+    );
+}
+
+async fn enforce_thread_start_timeout(
+    app: AppHandle,
+    state: CoachState,
+    generation: u64,
+    request_id: u64,
+) {
+    sleep(Duration::from_secs(COACH_STARTUP_TIMEOUT_SECONDS)).await;
+    let (mut child, stdin) = {
+        let mut inner = state.inner.lock().await;
+        if inner.generation != generation
+            || inner.pending_thread_start_id != Some(request_id)
+            || inner.thread_id.is_some()
+        {
+            return;
+        }
+
+        let detail =
+            format!("Codex did not become ready within {COACH_STARTUP_TIMEOUT_SECONDS} seconds.");
+        inner.last_error = Some(detail);
+        inner.pending_thread_start_id = None;
+        inner.thread_id = None;
+        inner.generation += 1;
+        (inner.child.take(), inner.stdin.take())
+    };
+
+    drop(stdin);
+    if let Some(ref mut process) = child {
+        let _ = process.kill().await;
+    }
+    let _ = app.emit(
+        "chesscave://coach-event",
+        json!({
+            "method": "chesscave/error",
+            "params": {
+                "code": "startup_timeout",
+                "message": format!("Codex did not become ready within {COACH_STARTUP_TIMEOUT_SECONDS} seconds."),
+                "retryable": true
             }
         }),
     );
@@ -273,11 +380,24 @@ async fn emit_stderr_events(app: AppHandle, stderr: tokio::process::ChildStderr)
 }
 
 #[tauri::command]
-pub async fn coach_start(app: AppHandle, state: State<'_, CoachState>) -> Result<(), String> {
+pub async fn coach_status(state: State<'_, CoachState>) -> Result<CoachConnectionSnapshot, String> {
+    let inner = state.inner.lock().await;
+    Ok(coach_snapshot(&inner))
+}
+
+#[tauri::command]
+pub async fn coach_start(
+    app: AppHandle,
+    state: State<'_, CoachState>,
+) -> Result<CoachConnectionSnapshot, String> {
     let mut inner = state.inner.lock().await;
     if inner.child.is_some() {
-        return Ok(());
+        return Ok(coach_snapshot(&inner));
     }
+
+    inner.last_error = None;
+    inner.generation += 1;
+    let generation = inner.generation;
 
     let mcp_script = locate_mcp_script(&app)?;
     let piece_directory = locate_piece_directory(&app)?;
@@ -375,16 +495,24 @@ pub async fn coach_start(app: AppHandle, state: State<'_, CoachState>) -> Result
     inner.thread_id = None;
     inner.pending_thread_start_id = Some(1);
     inner.next_id = 2;
+    let snapshot = coach_snapshot(&inner);
     drop(inner);
 
     tauri::async_runtime::spawn(emit_reader_events(
         app.clone(),
         state.inner().clone(),
+        generation,
         stdout,
     ));
-    tauri::async_runtime::spawn(emit_stderr_events(app, stderr));
+    tauri::async_runtime::spawn(emit_stderr_events(app.clone(), stderr));
+    tauri::async_runtime::spawn(enforce_thread_start_timeout(
+        app,
+        state.inner().clone(),
+        generation,
+        1,
+    ));
 
-    Ok(())
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -403,6 +531,8 @@ pub async fn coach_new_thread(app: AppHandle, state: State<'_, CoachState>) -> R
     let id = inner.next_id;
     inner.next_id += 1;
     inner.pending_thread_start_id = Some(id);
+    inner.last_error = None;
+    let generation = inner.generation;
 
     let result = match inner.stdin.as_mut() {
         Some(stdin) => write_message(stdin, &thread_start_request(id, &workspace)).await,
@@ -411,8 +541,17 @@ pub async fn coach_new_thread(app: AppHandle, state: State<'_, CoachState>) -> R
 
     if let Err(error) = result {
         inner.pending_thread_start_id = None;
+        inner.last_error = Some(error.clone());
         return Err(error);
     }
+
+    drop(inner);
+    tauri::async_runtime::spawn(enforce_thread_start_timeout(
+        app,
+        state.inner().clone(),
+        generation,
+        id,
+    ));
 
     Ok(())
 }
@@ -518,8 +657,10 @@ pub async fn coach_interrupt(state: State<'_, CoachState>, turn_id: String) -> R
 pub async fn coach_stop(state: State<'_, CoachState>) -> Result<(), String> {
     let (mut child, mut stdin) = {
         let mut inner = state.inner.lock().await;
+        inner.generation += 1;
         inner.thread_id = None;
         inner.pending_thread_start_id = None;
+        inner.last_error = None;
         (inner.child.take(), inner.stdin.take())
     };
 
