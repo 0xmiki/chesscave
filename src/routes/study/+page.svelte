@@ -4,6 +4,7 @@
   import AppHeader from "$lib/components/AppHeader.svelte";
   import ChessBoard from "$lib/components/ChessBoard.svelte";
   import CoachSidebar from "$lib/components/CoachSidebar.svelte";
+  import { requestsDrillCreation } from "$lib/chat/coach-actions";
   import EvaluationBar from "$lib/components/EvaluationBar.svelte";
   import GameSummary from "$lib/components/GameSummary.svelte";
   import MoveList from "$lib/components/MoveList.svelte";
@@ -120,6 +121,7 @@
   let playerUsername = $state("");
   let autoOrientedGame = "";
   let patchDraft = $state<PatchCard | null>(null);
+  let coachDrillRequest = $state(false);
   let patchSaved = $state(false);
   let patchReflections = $state<Record<string, { mistake: string; correction: string }>>({});
   let patchGenerating = $state(false);
@@ -840,6 +842,12 @@
     if (coachStatus !== "ready") return;
     const id = crypto.randomUUID();
     coachMessages = [...coachMessages, { id, role: "user", text }];
+
+    if (requestsDrillCreation(text)) {
+      await createDrillFromCoachDiscussion(text);
+      return;
+    }
+
     coachStatus = "thinking";
     coachDetail = "Sol is studying the position…";
     coachActivity = {
@@ -853,6 +861,31 @@
       coachStatus = "error";
       coachDetail = String(error);
       coachActivity = null;
+    }
+  }
+
+  function addCoachNotice(text: string) {
+    coachMessages = [
+      ...coachMessages,
+      { id: crypto.randomUUID(), role: "assistant", text },
+    ];
+  }
+
+  async function createDrillFromCoachDiscussion(request: string) {
+    const discussion = [...coachMessages]
+      .reverse()
+      .find((message) => message.role === "assistant" && message.text.trim());
+    const lesson = discussion?.text.trim().slice(0, 1_400) ?? request.trim();
+    const correction = patchDecision.bestMove ?? "";
+
+    coachDrillRequest = true;
+    const started = await generatePatch(
+      `From the coaching discussion: ${lesson}`,
+      correction,
+    );
+    if (!started) {
+      coachDrillRequest = false;
+      addCoachNotice(`I couldn't create that drill yet. ${patchError}`);
     }
   }
 
@@ -878,17 +911,42 @@
       acceptedSan,
       pendingPatchInput.source.playedMove?.san ?? null,
     );
-    patchDraft = createPatchCard({
+    const generatedCard = createPatchCard({
       ...pendingPatchInput,
       generated: parseGeneratedPatchCopy(response, fallback),
     });
+    const saveFromCoach = coachDrillRequest;
+    coachDrillRequest = false;
+    patchDraft = saveFromCoach ? null : generatedCard;
     pendingPatchInput = null;
     patchGenerating = false;
     patchResponse = "";
+    if (saveFromCoach) void saveCoachDrill(generatedCard, patchDecision.key);
   }
 
-  async function generatePatch(mistake: string, correction: string) {
-    if (patchGenerating) return;
+  async function saveCoachDrill(card: PatchCard, contextKey: string) {
+    try {
+      await savePatchCard(card);
+      if (patchDecision.key === contextKey) patchSaved = true;
+      patchReflections = {
+        ...patchReflections,
+        [contextKey]: { mistake: "", correction: "" },
+      };
+      addCoachNotice(
+        `Done — I created and saved a drill for this position. The verified answer is **${card.quiz.acceptedMoves[0]?.san ?? "the best move"}**. You can practice it from Drill.`,
+      );
+    } catch (error) {
+      patchDraft = card;
+      patchError = error instanceof Error ? error.message : String(error);
+      studyTab = "patch";
+      addCoachNotice(
+        "I created the drill, but couldn't save it automatically. I opened the Patch tab so you can try saving it again.",
+      );
+    }
+  }
+
+  async function generatePatch(mistake: string, correction: string): Promise<boolean> {
+    if (patchGenerating) return false;
     patchError = "";
     patchDraft = null;
     patchSaved = false;
@@ -897,14 +955,14 @@
       patchError = playerUsername
         ? `ChessCave cannot match ${playerUsername} to White or Black in this game, so it will not create a drill from the wrong perspective.`
         : "Choose your Chess.com player before creating a drill so ChessCave knows whether you are White or Black.";
-      return;
+      return false;
     }
 
     const studentColor = conversionSide === "w" ? "White" : "Black";
     const positionColor = sideToMove(patchDecision.fen);
     if (positionColor !== studentColor) {
       patchError = `You are ${studentColor}, but this position is ${positionColor} to move. Select one of your own moves before creating the drill.`;
-      return;
+      return false;
     }
 
     patchGenerating = true;
@@ -952,7 +1010,7 @@
 
       if (coachStatus !== "ready") {
         finishPatchGeneration();
-        return;
+        return true;
       }
 
       patchResponse = "";
@@ -990,7 +1048,9 @@
         ].join("\n"),
         "deliberate",
       );
+      return true;
     } catch (error) {
+      const hadVerifiedInput = pendingPatchInput !== null;
       if (pendingPatchInput) {
         finishPatchGeneration();
         patchError = "Codex was unavailable, so ChessCave built a verified local draft.";
@@ -998,6 +1058,7 @@
         patchGenerating = false;
         patchError = error instanceof Error ? error.message : String(error);
       }
+      return hadVerifiedInput;
     }
   }
 
