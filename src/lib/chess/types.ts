@@ -132,6 +132,9 @@ export interface CoachMessage {
   role: "user" | "assistant";
   text: string;
   pending?: boolean;
+  requestKind?: "message" | "drill";
+  requestStatus?: "pending" | "failed";
+  error?: string;
 }
 
 export interface CoachActivity {

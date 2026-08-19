@@ -779,6 +779,7 @@
     flex-direction: column;
     width: min(1180px, calc(100% - 56px));
     height: 100%;
+    min-height: 0;
     margin: 0 auto;
     padding: 30px 0 24px;
   }
@@ -991,7 +992,10 @@
   .history {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    flex: 1 1 auto;
+    /* Use the remaining dashboard height. An auto flex basis measures every
+       game row first, making the card extend behind main's clipped viewport
+       instead of giving .history-table a real overflow boundary. */
+    flex: 1 1 0;
     min-height: 140px;
     margin-top: 30px;
     overflow: hidden;

@@ -58,6 +58,7 @@ export function parseGeneratedPatchCopy(
       unknown
     >;
     return {
+      mistake: concise(parsed.mistake, fallback.mistake, 600),
       prompt: concise(parsed.prompt, fallback.prompt, 220),
       explanation: concise(parsed.explanation, fallback.explanation, 700),
       principle: concise(parsed.principle, fallback.principle, 240),
@@ -86,7 +87,7 @@ export function createPatchCard(input: NewPatchCardInput): PatchCard {
     id: input.id ?? crypto.randomUUID(),
     source: input.source,
     diagnosis: {
-      mistake: input.mistake.trim(),
+      mistake: input.generated.mistake.trim(),
       proposedCorrection: input.proposedCorrection.trim(),
     },
     quiz: {

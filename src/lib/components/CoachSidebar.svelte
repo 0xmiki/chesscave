@@ -13,6 +13,7 @@
     onSend,
     onNewConversation,
     onRetry,
+    onRetryMessage,
   }: {
     messages: CoachMessage[];
     status: "offline" | "starting" | "ready" | "thinking" | "error";
@@ -23,6 +24,7 @@
     onSend: (message: string) => void;
     onNewConversation: () => void;
     onRetry: () => void;
+    onRetryMessage: (id: string) => void;
   } = $props();
 
   let draft = $state("");
@@ -103,7 +105,9 @@
   }
 
   const composerStatus = $derived(
-    status === "ready"
+    activity
+      ? activity.label
+      : status === "ready"
       ? "Ready for this position"
       : status === "thinking"
         ? "Sol is answering"
@@ -211,9 +215,27 @@
             {/if}
           </article>
         {:else}
-          <div class="message user">
+          <div class:failed={message.requestStatus === "failed"} class="message user">
             <span class="user-label">You</span>
             <div class="bubble">{message.text}</div>
+            {#if message.requestStatus === "pending"}
+              <div class="request-state pending" role="status">
+                <span class="request-spinner" aria-hidden="true"></span>
+                {message.requestKind === "drill" ? "Creating drill…" : "Waiting for Sol…"}
+              </div>
+            {:else if message.requestStatus === "failed"}
+              <div class="request-failure" role="alert">
+                <span>
+                  <strong>{message.requestKind === "drill" ? "Drill creation failed" : "Message failed"}</strong>
+                  {#if message.error}<small>{message.error}</small>{/if}
+                </span>
+                <button
+                  type="button"
+                  onclick={() => onRetryMessage(message.id)}
+                  disabled={busy || status === "starting" || status === "offline"}
+                >Retry</button>
+              </div>
+            {/if}
           </div>
         {/if}
       {/each}
@@ -516,6 +538,77 @@ p {
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.user.failed .bubble {
+  border-color: #df9e8b;
+}
+
+.request-state,
+.request-failure {
+  max-width: 88%;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.request-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 3px;
+}
+
+.request-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--coral-dark);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.request-failure {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  color: var(--danger);
+}
+
+.request-failure > span {
+  display: grid;
+  gap: 1px;
+  text-align: right;
+}
+
+.request-failure strong {
+  font-size: 9px;
+}
+
+.request-failure small {
+  max-width: 34ch;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.request-failure button {
+  padding: 4px 8px;
+  border: 1px solid #df9e8b;
+  border-radius: 999px;
+  color: var(--coral-dark);
+  background: var(--pearl-raised);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.request-failure button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .assistant {

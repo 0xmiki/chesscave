@@ -55,6 +55,7 @@ export interface PatchCard {
 }
 
 export interface GeneratedPatchCopy {
+  mistake: string;
   prompt: string;
   explanation: string;
   principle: string;

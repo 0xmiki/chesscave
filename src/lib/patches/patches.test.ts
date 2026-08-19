@@ -37,6 +37,7 @@ describe("patch cards", () => {
       acceptedMove: { uci: "g1f3", san: "Nf3" },
       principalVariation: ["Nf3", "Nc6"],
       generated: {
+        mistake: "I lost time by moving the same piece twice.",
         prompt: "Develop without losing time.",
         explanation: "Nf3 develops and pressures e5.",
         principle: "Develop with tempo when possible.",
@@ -44,6 +45,7 @@ describe("patch cards", () => {
     });
     expect(isAcceptedPatchMove(card, "g1f3")).toBe(true);
     expect(isAcceptedPatchMove(card, "e2e4")).toBe(false);
+    expect(card.diagnosis.mistake).toBe("I lost time by moving the same piece twice.");
   });
 
   test("rejects a drill created from the opponent's turn", () => {
@@ -56,22 +58,24 @@ describe("patch cards", () => {
       proposedCorrection: "Play e4.",
       acceptedMove: { uci: "e2e4", san: "e4" },
       principalVariation: [],
-      generated: { prompt: "Find the move", explanation: "Play centrally.", principle: "Claim space." },
+      generated: { mistake: "I missed the center.", prompt: "Find the move", explanation: "Play centrally.", principle: "Claim space." },
     })).toThrow("student's turn");
   });
 
   test("parses bounded Codex JSON and falls back on malformed output", () => {
     const fallback = {
+      mistake: "Fallback mistake",
       prompt: "Fallback prompt",
       explanation: "Fallback explanation",
       principle: "Fallback principle",
     };
     expect(
       parseGeneratedPatchCopy(
-        '```json\n{"prompt":"Find the move","explanation":"Use the pin","principle":"Check forcing moves"}\n```',
+        '```json\n{"mistake":"I overlooked the pin.","prompt":"Find the move","explanation":"Use the pin","principle":"Check forcing moves"}\n```',
         fallback,
       ),
     ).toEqual({
+      mistake: "I overlooked the pin.",
       prompt: "Find the move",
       explanation: "Use the pin",
       principle: "Check forcing moves",
@@ -88,7 +92,7 @@ describe("patch cards", () => {
       proposedCorrection: "Nf3.",
       acceptedMove: { uci: "g1f3", san: "Nf3" },
       principalVariation: [],
-      generated: { prompt: "Move", explanation: "Why", principle: "Idea" },
+      generated: { mistake: "Missed development.", prompt: "Move", explanation: "Why", principle: "Idea" },
     });
     const again = reviewPatchCard(card, "again", 2_000);
     expect(again.schedule.dueAt).toBe(602_000);

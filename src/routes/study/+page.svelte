@@ -109,8 +109,11 @@
   let coachMessages = $state<CoachMessage[]>([]);
   let coachActivity = $state<CoachActivity | null>(null);
   let activeCoachTools = $state<Record<string, string>>({});
+  let activeCoachRequestId = $state<string | null>(null);
+  let queuedCoachRetryId: string | null = null;
   let coachStartAttempts = 0;
   let coachStartupTimer: number | null = null;
+  let coachRequestTimer: number | null = null;
   let importOpen = $state(false);
   let pgnDraft = $state("");
   let importError = $state("");
@@ -400,12 +403,65 @@
     coachStartupTimer = null;
   }
 
+  function clearCoachRequestTimer() {
+    if (coachRequestTimer !== null) window.clearTimeout(coachRequestTimer);
+    coachRequestTimer = null;
+  }
+
+  function updateCoachRequest(
+    id: string,
+    requestStatus?: "pending" | "failed",
+    error?: string,
+  ) {
+    coachMessages = coachMessages.map((message) =>
+      message.id === id ? { ...message, requestStatus, error } : message,
+    );
+  }
+
+  function failActiveCoachRequest(error: string) {
+    if (activeCoachRequestId) {
+      updateCoachRequest(activeCoachRequestId, "failed", error);
+      activeCoachRequestId = null;
+    }
+    clearCoachRequestTimer();
+  }
+
+  function completeActiveCoachRequest() {
+    if (activeCoachRequestId) {
+      updateCoachRequest(activeCoachRequestId);
+      activeCoachRequestId = null;
+    }
+    clearCoachRequestTimer();
+  }
+
+  function armCoachRequestTimer() {
+    clearCoachRequestTimer();
+    if (!activeCoachRequestId) return;
+    coachRequestTimer = window.setTimeout(() => {
+      coachRequestTimer = null;
+      const detail = "Sol did not respond in time. Retry this request.";
+      failActiveCoachRequest(detail);
+      coachStatus = "error";
+      coachDetail = detail;
+      coachActivity = null;
+      activeCoachTools = {};
+    }, 90_000);
+  }
+
+  function runQueuedCoachRetry() {
+    if (coachStatus !== "ready" || !queuedCoachRetryId) return;
+    const id = queuedCoachRetryId;
+    queuedCoachRetryId = null;
+    void dispatchCoachRequest(id);
+  }
+
   function applyCoachConnection(snapshot: CoachConnectionSnapshot) {
     if (snapshot.status === "ready") {
       clearCoachStartupTimer();
       coachStartAttempts = 0;
       coachStatus = "ready";
       coachDetail = "Current position synced";
+      queueMicrotask(runQueuedCoachRetry);
       return;
     }
     coachStatus = snapshot.status;
@@ -496,7 +552,16 @@
         const savedMessages = localStorage.getItem("chesscave.coach-messages.v1");
         if (savedMessages) {
           const restored = JSON.parse(savedMessages) as CoachMessage[];
-          coachMessages = restored.map((message) => ({ ...message, pending: false }));
+          coachMessages = restored.map((message) => ({
+            ...message,
+            pending: false,
+            requestStatus:
+              message.requestStatus === "pending" ? "failed" : message.requestStatus,
+            error:
+              message.requestStatus === "pending"
+                ? "ChessCave closed before this request finished."
+                : message.error,
+          }));
         }
       } catch {
         localStorage.removeItem(STUDY_STORAGE_KEY);
@@ -531,6 +596,7 @@
     return () => {
       disposed = true;
       clearCoachStartupTimer();
+      clearCoachRequestTimer();
       unlisten?.();
       unlistenReview?.();
     };
@@ -841,10 +907,31 @@
   async function askCoach(text: string) {
     if (coachStatus !== "ready") return;
     const id = crypto.randomUUID();
-    coachMessages = [...coachMessages, { id, role: "user", text }];
+    coachMessages = [
+      ...coachMessages,
+      {
+        id,
+        role: "user",
+        text,
+        requestKind: requestsDrillCreation(text) ? "drill" : "message",
+        requestStatus: "pending",
+      },
+    ];
+    await dispatchCoachRequest(id);
+  }
 
-    if (requestsDrillCreation(text)) {
-      await createDrillFromCoachDiscussion(text);
+  async function dispatchCoachRequest(id: string) {
+    const request = coachMessages.find(
+      (message) => message.id === id && message.role === "user",
+    );
+    if (!request || coachStatus !== "ready") return;
+
+    activeCoachRequestId = id;
+    updateCoachRequest(id, "pending");
+    armCoachRequestTimer();
+
+    if (request.requestKind === "drill" || requestsDrillCreation(request.text)) {
+      await createDrillFromCoachDiscussion(request.text);
       return;
     }
 
@@ -856,12 +943,32 @@
       detail: "Sol is deciding what evidence to inspect.",
     };
     try {
-      await sendCoachMessage(text, coachContext());
+      await sendCoachMessage(request.text, coachContext());
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      failActiveCoachRequest(detail);
       coachStatus = "error";
-      coachDetail = String(error);
+      coachDetail = detail;
       coachActivity = null;
     }
+  }
+
+  function retryCoachMessage(id: string) {
+    if (coachStatus === "thinking" || coachStatus === "starting") return;
+    const request = coachMessages.find(
+      (message) => message.id === id && message.role === "user",
+    );
+    if (!request) return;
+
+    updateCoachRequest(id, "pending");
+    if (coachStatus === "ready") {
+      void dispatchCoachRequest(id);
+      return;
+    }
+
+    queuedCoachRetryId = id;
+    coachStartAttempts = 0;
+    void connectCoach(true);
   }
 
   function addCoachNotice(text: string) {
@@ -872,19 +979,26 @@
   }
 
   async function createDrillFromCoachDiscussion(request: string) {
-    const discussion = [...coachMessages]
-      .reverse()
-      .find((message) => message.role === "assistant" && message.text.trim());
-    const lesson = discussion?.text.trim().slice(0, 1_400) ?? request.trim();
     const correction = patchDecision.bestMove ?? "";
 
     coachDrillRequest = true;
+    coachDetail = "Creating your drill…";
+    coachActivity = {
+      kind: "thinking",
+      label: "Creating your drill",
+      detail: "Verifying the position and preparing a practice card.",
+    };
     const started = await generatePatch(
-      `From the coaching discussion: ${lesson}`,
+      request.trim(),
       correction,
     );
     if (!started) {
       coachDrillRequest = false;
+      const detail = patchError || "ChessCave could not create this drill.";
+      failActiveCoachRequest(detail);
+      coachStatus = "ready";
+      coachDetail = "Current position synced";
+      coachActivity = null;
       addCoachNotice(`I couldn't create that drill yet. ${patchError}`);
     }
   }
@@ -895,6 +1009,7 @@
     playedSan: string | null,
   ): GeneratedPatchCopy {
     return {
+      mistake: mistake.trim(),
       prompt: playedSan
         ? `You played ${playedSan}. Find the move that patches the mistake.`
         : "Find the move you want to recognize in this position.",
@@ -921,7 +1036,15 @@
     pendingPatchInput = null;
     patchGenerating = false;
     patchResponse = "";
-    if (saveFromCoach) void saveCoachDrill(generatedCard, patchDecision.key);
+    if (saveFromCoach) {
+      coachDetail = "Saving your drill…";
+      coachActivity = {
+        kind: "waiting",
+        label: "Saving your drill",
+        detail: "Adding the verified card to your Drill queue.",
+      };
+      void saveCoachDrill(generatedCard, patchDecision.key);
+    }
   }
 
   async function saveCoachDrill(card: PatchCard, contextKey: string) {
@@ -935,6 +1058,10 @@
       addCoachNotice(
         `Done — I created and saved a drill for this position. The verified answer is **${card.quiz.acceptedMoves[0]?.san ?? "the best move"}**. You can practice it from Drill.`,
       );
+      completeActiveCoachRequest();
+      coachStatus = "ready";
+      coachDetail = "Current position synced";
+      coachActivity = null;
     } catch (error) {
       patchDraft = card;
       patchError = error instanceof Error ? error.message : String(error);
@@ -942,6 +1069,10 @@
       addCoachNotice(
         "I created the drill, but couldn't save it automatically. I opened the Patch tab so you can try saving it again.",
       );
+      failActiveCoachRequest(`The drill was created, but could not be saved: ${patchError}`);
+      coachStatus = "ready";
+      coachDetail = "Drill save failed";
+      coachActivity = null;
     }
   }
 
@@ -1016,13 +1147,19 @@
       patchResponse = "";
       coachStatus = "thinking";
       coachDetail = "Codex is designing the patch…";
+      coachActivity = {
+        kind: "thinking",
+        label: "Writing the drill",
+        detail: "Sol is turning the verified position into a focused practice card.",
+      };
       const prompt = [
         "Create one concise chess flashcard from the student's diagnosis.",
         `NON-NEGOTIABLE PERSPECTIVE: the student is ${playerUsername}, playing ${studentColor}.`,
         `This position is ${positionColor} to move, so the verified move belongs to the student, not the opponent.`,
         "Write every reference to 'you', the mistake, the correction, and the lesson from the student's side only.",
         "Never turn an opponent move, opponent plan, or opponent mistake into the student's drill.",
-        "Return JSON only with exactly these string fields: prompt, explanation, principle.",
+        "Return JSON only with exactly these string fields: mistake, prompt, explanation, principle.",
+        "The mistake field must be a concise first-person account of what the student got wrong, inferred from their statement and the verified position. Do not copy conversation labels, assistant notices, or phrases such as 'from the coaching discussion'.",
         "The prompt must ask the student to find a move without revealing it.",
         "The explanation must connect the student's mistake to the verified correction.",
         "The principle must be a short reusable thinking rule, not a slogan.",
@@ -1161,23 +1298,28 @@
   function handleCoachEvent(event: Record<string, unknown>) {
     const method = typeof event.method === "string" ? event.method : "";
     const params = (event.params ?? {}) as Record<string, unknown>;
+    if (activeCoachRequestId) armCoachRequestTimer();
 
     if (event.id === 1 && event.result) {
       clearCoachStartupTimer();
       coachStartAttempts = 0;
       coachStatus = "ready";
       coachDetail = "Current position synced";
+      queueMicrotask(runQueuedCoachRetry);
       return;
     }
 
     if (event.error) {
       const error = event.error as Record<string, unknown>;
+      const detail = String(error.message ?? "Codex app-server error");
       if (patchGenerating && pendingPatchInput) {
         finishPatchGeneration();
         patchError = "Codex could not finish, so ChessCave built a verified local draft.";
+      } else {
+        failActiveCoachRequest(detail);
       }
       coachStatus = "error";
-      coachDetail = String(error.message ?? "Codex app-server error");
+      coachDetail = detail;
       coachActivity = null;
       activeCoachTools = {};
       return;
@@ -1188,6 +1330,7 @@
       coachStartAttempts = 0;
       coachStatus = "ready";
       coachDetail = "Current position synced";
+      queueMicrotask(runQueuedCoachRetry);
       return;
     }
 
@@ -1198,6 +1341,9 @@
         coachStatus = "error";
         coachDetail = String(params.message ?? "Codex app-server stopped");
         return;
+      }
+      if (activeCoachRequestId) {
+        failActiveCoachRequest(String(params.message ?? "Codex app-server stopped"));
       }
       if (params.retryable === true && coachStartAttempts < 2) {
         clearCoachStartupTimer();
@@ -1211,6 +1357,7 @@
       }
       coachStatus = "error";
       coachDetail = String(params.message ?? "Codex app-server stopped");
+      failActiveCoachRequest(coachDetail);
       coachActivity = null;
       activeCoachTools = {};
       return;
@@ -1328,11 +1475,33 @@
     }
 
     if (method === "turn/completed") {
-      if (patchGenerating) finishPatchGeneration(patchResponse);
+      const turn = (params.turn ?? {}) as Record<string, unknown>;
+      const turnStatus = String(turn.status ?? params.status ?? "completed");
+      if (["failed", "error", "cancelled", "canceled", "interrupted"].includes(turnStatus)) {
+        const turnError = (turn.error ?? params.error ?? {}) as Record<string, unknown>;
+        const detail = String(turnError.message ?? "Sol could not finish this request.");
+        if (patchGenerating && pendingPatchInput) {
+          finishPatchGeneration();
+          patchError = "Sol could not finish, so ChessCave built a verified local drill.";
+        } else {
+          failActiveCoachRequest(detail);
+        }
+        coachStatus = "ready";
+        coachDetail = "Request failed — you can retry it";
+        coachActivity = null;
+        activeCoachTools = {};
+        return;
+      }
+
+      const completingDrill = patchGenerating;
+      if (completingDrill) finishPatchGeneration(patchResponse);
       for (const message of coachMessages) message.pending = false;
-      coachStatus = "ready";
-      coachDetail = "Current position synced";
-      coachActivity = null;
+      if (!completingDrill) {
+        completeActiveCoachRequest();
+        coachStatus = "ready";
+        coachDetail = "Current position synced";
+        coachActivity = null;
+      }
       activeCoachTools = {};
     }
   }
@@ -1642,10 +1811,11 @@
             detail={coachDetail}
             activity={coachActivity}
             contextLabel={`${currentLabel} · ${coachIdentityLabel}${review ? " · Reviewed" : ""}`}
-            busy={coachStatus === "thinking"}
+            busy={coachStatus === "thinking" || patchGenerating || coachDrillRequest}
             onSend={askCoach}
             onNewConversation={startNewCoachConversation}
             onRetry={retryCoach}
+            onRetryMessage={retryCoachMessage}
           />
         {:else}
           <PatchComposer
