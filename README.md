@@ -13,6 +13,27 @@ computer. Home requests public Chess.com data for the username you choose. When
 you use the coach, ChessCave gives Codex the current game or position and your
 question so it can answer.
 
+## Required: install Stockfish
+
+ChessCave does not include Stockfish. Install it before opening the app.
+Download the correct build for Windows, macOS, or Linux from the
+[official Stockfish download page](https://stockfishchess.org/download/), or use
+your system package manager.
+
+After installation, make sure the `stockfish` command is on your system
+`PATH`:
+
+```sh
+stockfish
+```
+
+Type `quit` to close the engine. If you keep Stockfish elsewhere, set
+`CHESSCAVE_STOCKFISH_PATH` to the executable's full path before starting
+ChessCave.
+
+Sol commentary and the Study coach also need a working local Codex installation
+and login. The rest of the chess analysis only needs Stockfish.
+
 ## What you can do
 
 ### Home
@@ -85,10 +106,7 @@ started to slip.
   highlights.
 - In Study, reviewed moves may show Stockfish's better move as a green arrow.
 
-## What you need
-
-ChessCave needs Stockfish on the system `PATH`. The coaching features also need
-a working local Codex installation and login.
+## NixOS setup
 
 On NixOS, add Stockfish to `configuration.nix`:
 
@@ -105,9 +123,8 @@ sudo nixos-rebuild switch
 command -v stockfish
 ```
 
-If Stockfish is installed somewhere else, set `CHESSCAVE_STOCKFISH_PATH` to its
-full path. You can also use `CHESSCAVE_CODEX_PATH` and `CHESSCAVE_NODE_PATH` when
-those commands have non-standard names.
+You can use `CHESSCAVE_CODEX_PATH` and `CHESSCAVE_NODE_PATH` when those
+commands have non-standard names.
 
 ## Run the app for development
 
