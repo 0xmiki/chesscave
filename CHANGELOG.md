@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+- Discover available Codex models before starting the coach.
+- Use Terra for live coaching when Luna is unavailable, or the catalog default
+  when neither preferred model is listed.
+- Retry a rejected model once with an available alternative and remember rejected
+  models until the account changes or the coach restarts.
+- Match reasoning effort to the selected model. Quota and network errors do not
+  trigger model switching.
+
 ## 0.1.2
 
 - Fixed piece dragging so the piece follows the pointer and drops without a

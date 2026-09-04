@@ -1,3 +1,6 @@
+#[path = "coach_models.rs"]
+mod coach_models;
+use coach_models::ModelRouting;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
@@ -28,6 +31,7 @@ struct CoachInner {
     next_id: u64,
     generation: u64,
     last_error: Option<String>,
+    routing: ModelRouting,
 }
 
 #[derive(Clone, Serialize)]
@@ -221,6 +225,36 @@ async fn emit_reader_events(
                     };
                     if !current {
                         continue;
+                    }
+
+                    {
+                        let mut inner = state.inner.lock().await;
+                        if inner.generation != generation {
+                            continue;
+                        }
+                        let mut next_id = inner.next_id;
+                        let routed = inner.routing.handle(&message, &mut next_id);
+                        inner.next_id = next_id;
+                        if let Some(outgoing) = routed.outgoing {
+                            if let Some(stdin) = inner.stdin.as_mut() {
+                                if let Err(error) = write_message(stdin, &outgoing).await {
+                                    inner.last_error = Some(error.clone());
+                                    let _ = app.emit("chesscave://coach-event", json!({"method": "chesscave/error", "params": {"message": error, "retryable": true}}));
+                                }
+                            }
+                        }
+                        if routed.suppress {
+                            continue;
+                        }
+                        if message["method"] == "account/updated" {
+                            let id = inner.next_id;
+                            inner.next_id += 1;
+                            let deferred = inner.routing.deferred_thread_for_refresh();
+                            let request = inner.routing.discover(id, deferred);
+                            if let Some(stdin) = inner.stdin.as_mut() {
+                                let _ = write_message(stdin, &request).await;
+                            }
+                        }
                     }
 
                     if let Some(response_id) = message.get("id").and_then(Value::as_u64) {
@@ -488,13 +522,17 @@ pub async fn coach_start(
         }),
     )
     .await?;
-    write_message(&mut stdin, &thread_start_request(1, &workspace)).await?;
+    inner.routing = ModelRouting::default();
+    let discovery = inner
+        .routing
+        .discover(2, Some(thread_start_request(1, &workspace)));
+    write_message(&mut stdin, &discovery).await?;
 
     inner.child = Some(child);
     inner.stdin = Some(stdin);
     inner.thread_id = None;
     inner.pending_thread_start_id = Some(1);
-    inner.next_id = 2;
+    inner.next_id = 3;
     let snapshot = coach_snapshot(&inner);
     drop(inner);
 
@@ -520,7 +558,7 @@ pub async fn coach_new_thread(app: AppHandle, state: State<'_, CoachState>) -> R
     let workspace = coach_workspace(&app)?;
     let mut inner = state.inner.lock().await;
 
-    if inner.pending_thread_start_id.is_some() {
+    if inner.pending_thread_start_id.is_some() || inner.routing.discovering() {
         return Err("Codex is still starting. Please try again in a moment.".to_string());
     }
 
@@ -530,12 +568,14 @@ pub async fn coach_new_thread(app: AppHandle, state: State<'_, CoachState>) -> R
 
     let id = inner.next_id;
     inner.next_id += 1;
+    inner.routing.validate_selection(&study_coach_model())?;
     inner.pending_thread_start_id = Some(id);
     inner.last_error = None;
     let generation = inner.generation;
 
+    let request = inner.routing.prepare(thread_start_request(id, &workspace));
     let result = match inner.stdin.as_mut() {
-        Some(stdin) => write_message(stdin, &thread_start_request(id, &workspace)).await,
+        Some(stdin) => write_message(stdin, &request).await,
         None => Err("Codex app-server is not running.".to_string()),
     };
 
@@ -568,20 +608,18 @@ pub async fn coach_send(
     }
 
     let mut inner = state.inner.lock().await;
-    if inner.pending_thread_start_id.is_some() {
+    if inner.pending_thread_start_id.is_some() || inner.routing.discovering() {
         return Err("Codex is still starting. Please try again in a moment.".to_string());
     }
     let thread_id = inner
         .thread_id
         .clone()
         .ok_or_else(|| "Codex is still starting. Please try again in a moment.".to_string())?;
+    if inner.routing.busy() {
+        return Err("Codex is still answering. Wait or stop the current response.".to_string());
+    }
     let id = inner.next_id;
     inner.next_id += 1;
-    let stdin = inner
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "Codex app-server is not running.".to_string())?;
-
     let prompt = format!(
         "{message}\n\n<chesscave_position_context>\n{context}\n</chesscave_position_context>\n\
          Use the ChessCave MCP tools when analysis is needed. Explain the chess idea, not just the engine number."
@@ -604,21 +642,27 @@ pub async fn coach_send(
         "medium"
     };
 
-    write_message(
-        stdin,
-        &json!({
-            "method": "turn/start",
-            "id": id,
-            "params": {
-                "threadId": thread_id,
-                "model": model,
-                "effort": effort,
-                "serviceTier": if live { live_coach_service_tier() } else { None },
-                "input": [{ "type": "text", "text": prompt }]
-            }
-        }),
-    )
-    .await
+    inner.routing.validate_selection(&model)?;
+    let request = inner.routing.prepare(json!({
+        "method": "turn/start",
+        "id": id,
+        "params": {
+            "threadId": thread_id,
+            "model": model,
+            "effort": effort,
+            "serviceTier": if live { live_coach_service_tier() } else { None },
+            "input": [{ "type": "text", "text": prompt }]
+        }
+    }));
+    let stdin = inner
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "Codex app-server is not running.".to_string())?;
+    let result = write_message(stdin, &request).await;
+    if result.is_err() {
+        inner.routing.cancel();
+    }
+    result
 }
 
 #[tauri::command]
@@ -628,6 +672,7 @@ pub async fn coach_interrupt(state: State<'_, CoachState>, turn_id: String) -> R
     }
 
     let mut inner = state.inner.lock().await;
+    inner.routing.cancel();
     let thread_id = inner
         .thread_id
         .clone()

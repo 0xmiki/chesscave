@@ -36,10 +36,16 @@ Codex explains its own move in human terms and responds when the player shares
 an idea. It receives the opening, position, moves, and Stockfish evidence.
 Codex does not choose the engine move or invent an evaluation.
 
-Live turns use `gpt-5.6-luna` with low reasoning effort. The task is short and well-defined, while Stockfish supplies the
+Live turns prefer `gpt-5.6-luna` with low reasoning effort. The task is short and well-defined, while Stockfish supplies the
 chess judgment, so additional model reasoning would add latency without owning
 an important decision. Study mode continues to use `gpt-5.6-terra` at medium
-effort. Both model choices can be overridden with `CHESSCAVE_LIVE_COACH_MODEL`
+effort. Model discovery checks these preferences against the Codex catalog.
+Live coaching falls back to Terra when Luna is missing or rejected. If neither
+preferred model is listed, ChessCave uses the catalog default and its supported
+reasoning settings. It retries model-access rejection once, remembers rejected
+models for the session, and refreshes discovery when the account changes.
+Quota, connection, and unrelated errors do not trigger fallback.
+Both model choices can be overridden with `CHESSCAVE_LIVE_COACH_MODEL`
 and `CHESSCAVE_STUDY_COACH_MODEL`. The optional
 `CHESSCAVE_LIVE_COACH_SERVICE_TIER=priority` enables the account's faster tier.
 

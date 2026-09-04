@@ -46,7 +46,10 @@ full path before starting the app.
 
 The Codex coach is optional. It needs a working local Codex installation and
 login. ChessCave sends Codex the current game or position only after you ask for
-an explanation.
+an explanation. ChessCave discovers the available models at startup. It prefers
+Luna for live coaching and Terra for study, with Terra or the catalog default as
+a fallback. Model-access rejections get one retry with an available alternative;
+usage limits still apply.
 
 ## Download
 
