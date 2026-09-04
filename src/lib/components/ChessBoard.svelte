@@ -23,6 +23,20 @@
     color: Color;
   };
 
+  type PieceDrag = {
+    pointerId: number;
+    from: string;
+    type: PieceSymbol;
+    color: Color;
+    startX: number;
+    startY: number;
+    offsetX: number;
+    offsetY: number;
+    x: number;
+    y: number;
+    active: boolean;
+  };
+
   let {
     fen,
     flipped = false,
@@ -59,7 +73,7 @@
   } | null>(null);
   let previewArrow = $state<BoardArrow | null>(null);
   let keyboardSquare = $state<string | null>(null);
-  let draggedSquare = $state<string | null>(null);
+  let pieceDrag = $state<PieceDrag | null>(null);
   let suppressDragClick = false;
 
   const files = $derived(flipped ? ["h", "g", "f", "e", "d", "c", "b", "a"] : ["a", "b", "c", "d", "e", "f", "g", "h"]);
@@ -280,13 +294,40 @@
   }
 
   function handlePointerDown(event: PointerEvent) {
-    if (event.button !== 2) {
-      if (event.button === 0 && (userArrows.length || userHighlights.length)) {
+    if (event.button === 0) {
+      if (userArrows.length || userHighlights.length) {
         userArrows = [];
         userHighlights = [];
       }
+      if (compact || !event.isPrimary) return;
+
+      const from = pointerSquare(event);
+      if (!from) return;
+      const piece = position.get(from as Square);
+      if (!piece) return;
+
+      const bounds = boardElement.getBoundingClientRect();
+      const squareSize = bounds.width / 8;
+      const coordinates = pieceCoordinates(from);
+      const pieceLeft = bounds.left + coordinates.x * squareSize;
+      const pieceTop = bounds.top + coordinates.y * squareSize;
+      pieceDrag = {
+        pointerId: event.pointerId,
+        from,
+        type: piece.type,
+        color: piece.color,
+        startX: event.clientX,
+        startY: event.clientY,
+        offsetX: event.clientX - pieceLeft,
+        offsetY: event.clientY - pieceTop,
+        x: coordinates.x * squareSize,
+        y: coordinates.y * squareSize,
+        active: false,
+      };
       return;
     }
+
+    if (event.button !== 2) return;
 
     const from = pointerSquare(event);
     if (!from) return;
@@ -303,16 +344,56 @@
   }
 
   function handlePointerMove(event: PointerEvent) {
-    if (!drawing || drawing.pointerId !== event.pointerId) return;
+    if (drawing && drawing.pointerId === event.pointerId) {
+      event.preventDefault();
+      const to = pointerSquare(event);
+      previewArrow =
+        to && to !== drawing.from
+          ? { from: drawing.from, to, color: drawing.color }
+          : null;
+      return;
+    }
+
+    if (!pieceDrag || pieceDrag.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(
+      event.clientX - pieceDrag.startX,
+      event.clientY - pieceDrag.startY,
+    );
+    if (!pieceDrag.active && distance < 4) return;
+
     event.preventDefault();
-    const to = pointerSquare(event);
-    previewArrow =
-      to && to !== drawing.from
-        ? { from: drawing.from, to, color: drawing.color }
-        : null;
+    if (!pieceDrag.active) {
+      if (selected !== pieceDrag.from) onSquareClick(pieceDrag.from);
+      boardElement.setPointerCapture(event.pointerId);
+    }
+    const bounds = boardElement.getBoundingClientRect();
+    pieceDrag = {
+      ...pieceDrag,
+      x: event.clientX - bounds.left - pieceDrag.offsetX,
+      y: event.clientY - bounds.top - pieceDrag.offsetY,
+      active: true,
+    };
   }
 
   function handlePointerUp(event: PointerEvent) {
+    if (pieceDrag && pieceDrag.pointerId === event.pointerId) {
+      const completed = pieceDrag;
+      pieceDrag = null;
+      if (completed.active) {
+        event.preventDefault();
+        const to = pointerSquare(event);
+        suppressDragClick = true;
+        if (to && to !== completed.from) onSquareClick(to);
+        window.setTimeout(() => {
+          suppressDragClick = false;
+        }, 0);
+      }
+      if (boardElement.hasPointerCapture(event.pointerId)) {
+        boardElement.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
+
     if (!drawing || drawing.pointerId !== event.pointerId) return;
     event.preventDefault();
     const completed = drawing;
@@ -369,9 +450,14 @@
   }
 
   function cancelDrawing(event: PointerEvent) {
-    if (!drawing || drawing.pointerId !== event.pointerId) return;
-    drawing = null;
-    previewArrow = null;
+    if (pieceDrag?.pointerId === event.pointerId) {
+      pieceDrag = null;
+      suppressDragClick = false;
+    }
+    if (drawing?.pointerId === event.pointerId) {
+      drawing = null;
+      previewArrow = null;
+    }
   }
 
   function focusSquare(square: string) {
@@ -395,39 +481,6 @@
     focusSquare(nextBoardSquare(files, ranks, square, event.key as BoardArrowKey));
   }
 
-  function handleDragStart(event: DragEvent, square: string) {
-    if (compact || !position.get(square as Square)) {
-      event.preventDefault();
-      return;
-    }
-    draggedSquare = square;
-    event.dataTransfer?.setData("text/plain", square);
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-    onSquareClick(square);
-  }
-
-  function handleDragOver(event: DragEvent) {
-    if (!draggedSquare) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  }
-
-  function handleDrop(event: DragEvent, square: string) {
-    if (!draggedSquare) return;
-    event.preventDefault();
-    const from = draggedSquare;
-    draggedSquare = null;
-    suppressDragClick = true;
-    if (from !== square) onSquareClick(square);
-  }
-
-  function finishDrag() {
-    draggedSquare = null;
-    window.setTimeout(() => {
-      suppressDragClick = false;
-    }, 0);
-  }
-
   function handleSquareClick(square: string) {
     if (!suppressDragClick) onSquareClick(square);
   }
@@ -435,6 +488,7 @@
 
 <div
   class:compact
+  class:piece-dragging={pieceDrag?.active}
   class="board"
   role={compact ? "img" : "grid"}
   aria-label={compact ? "Saved chess position" : boardLabel}
@@ -462,10 +516,8 @@
           class:selected={selected === square}
           class:target={legalTargets.includes(square)}
           class:occupied={Boolean(piece)}
-          class:dragging={draggedSquare === square}
           class="square"
           type="button"
-          draggable={!compact && Boolean(piece)}
           data-board-square={square}
           role={compact ? undefined : "gridcell"}
           tabindex={compact
@@ -478,10 +530,6 @@
           aria-label={`${square}, ${piece ? `${piece.color === "w" ? "white" : "black"} ${pieceNames[piece.type]}` : "empty"}${selected === square ? ", selected" : ""}${legalTargets.includes(square) ? ", legal destination" : ""}`}
           onfocus={() => (keyboardSquare = square)}
           onkeydown={(event) => handleSquareKeydown(event, square)}
-          ondragstart={(event) => handleDragStart(event, square)}
-          ondragover={handleDragOver}
-          ondrop={(event) => handleDrop(event, square)}
-          ondragend={finishDrag}
           onclick={() => handleSquareClick(square)}
         >
           {#if fileIndex === 0}
@@ -547,6 +595,7 @@
       {@const coordinates = pieceCoordinates(piece.square)}
       <div
         class="piece"
+        class:dragging={pieceDrag?.active && pieceDrag.from === piece.square}
         data-piece-id={piece.id}
         style={`--piece-x: ${coordinates.x}; --piece-y: ${coordinates.y};`}
       >
@@ -556,6 +605,18 @@
       </div>
     {/each}
   </div>
+
+  {#if pieceDrag?.active}
+    <div
+      class="dragged-piece"
+      style={`--drag-x: ${pieceDrag.x}px; --drag-y: ${pieceDrag.y}px;`}
+      aria-hidden="true"
+    >
+      <div class="dragged-piece-art">
+        <ChessPiece type={pieceDrag.type} color={pieceDrag.color} label={false} />
+      </div>
+    </div>
+  {/if}
 
   {#if annotation && lastMove}
     {@const annotationCoordinates = pieceCoordinates(lastMove.to)}
@@ -691,6 +752,37 @@
     will-change: transform;
   }
 
+  .piece.dragging {
+    opacity: 0;
+  }
+
+  .dragged-piece {
+    position: absolute;
+    z-index: 6;
+    top: 0;
+    left: 0;
+    width: 12.5%;
+    height: 12.5%;
+    transform: translate3d(var(--drag-x), var(--drag-y), 0);
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .dragged-piece-art {
+    width: 100%;
+    height: 100%;
+    transform: scale(1.08);
+    filter: drop-shadow(0 8px 7px rgba(28, 24, 20, 0.28));
+    animation: pick-up 80ms ease-out;
+  }
+
+  @keyframes pick-up {
+    from {
+      transform: scale(1);
+      filter: drop-shadow(0 1px 1px rgba(28, 24, 20, 0.12));
+    }
+  }
+
   .move-annotation {
     position: absolute;
     z-index: 5;
@@ -718,13 +810,15 @@
     padding: 0;
     cursor: pointer;
     isolation: isolate;
+    touch-action: none;
+    user-select: none;
   }
 
   .square.occupied {
     cursor: grab;
   }
 
-  .square.dragging {
+  .board.piece-dragging .square {
     cursor: grabbing;
   }
 
@@ -747,14 +841,6 @@
 
   .square.selected::before {
     background: rgba(220, 120, 89, 0.68);
-  }
-
-  .square.dragging::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    background: rgba(220, 120, 89, 0.42);
   }
 
   .move-target {
