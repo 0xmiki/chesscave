@@ -214,12 +214,12 @@ fn select_recent_games(games: Vec<ChessComGame>, limit: usize) -> Vec<ChessComGa
         .filter(|game| game.rules == "chess" && game.time_class == "blitz" && !game.pgn.is_empty())
         .collect::<Vec<_>>();
 
-    rapid.sort_by(|left, right| right.end_time.cmp(&left.end_time));
-    blitz.sort_by(|left, right| right.end_time.cmp(&left.end_time));
+    rapid.sort_by_key(|game| std::cmp::Reverse(game.end_time));
+    blitz.sort_by_key(|game| std::cmp::Reverse(game.end_time));
     rapid.truncate(limit);
     blitz.truncate(limit);
     rapid.extend(blitz);
-    rapid.sort_by(|left, right| right.end_time.cmp(&left.end_time));
+    rapid.sort_by_key(|game| std::cmp::Reverse(game.end_time));
     rapid
 }
 

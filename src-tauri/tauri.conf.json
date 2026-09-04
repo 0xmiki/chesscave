@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "chesscave",
+  "productName": "ChessCave",
   "version": "0.1.0",
   "identifier": "com.miki.chesscave",
   "build": {
@@ -21,7 +21,14 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "font-src": "'self' data:",
+        "img-src": "'self' asset: http://asset.localhost blob: data: https://images.chesscomfiles.com",
+        "object-src": "'none'",
+        "style-src": "'self' 'unsafe-inline'"
+      }
     }
   },
   "bundle": {

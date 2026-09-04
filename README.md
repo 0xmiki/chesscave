@@ -173,16 +173,36 @@ player's rating when the PGN includes it, and Stockfish's saved search results.
 
 ## Checks
 
+`bun run release:check` runs the Svelte and TypeScript checks, frontend tests,
+the production web build, Rust formatting, Clippy, and Rust tests.
+
 ```sh
-bun run check
-bun test
-bun run build
-cargo test --manifest-path src-tauri/Cargo.toml
+bun run release:check
+```
+
+Run the live coach check separately because it needs Stockfish and a local Codex
+login:
+
+```sh
 bun run smoke:coach
 ```
 
-The last command needs a local Codex login. It checks that the coach can ask
-ChessCave to analyze a position with Stockfish.
+Build the desktop installers after all checks pass:
+
+```sh
+bun run tauri build
+```
+
+The installers are written under `src-tauri/target/release/bundle/`. Code
+signing and platform store credentials must be configured outside this
+repository before publishing.
+
+On NixOS, `linuxdeploy` may fail while creating the AppImage. Build the Debian
+and RPM packages locally, then build the AppImage on Ubuntu:
+
+```sh
+bun run tauri build --bundles deb,rpm
+```
 
 ## Project structure
 
@@ -193,6 +213,8 @@ them directly.
 
 More detail is in [docs/architecture.md](docs/architecture.md) and
 [docs/game-review.md](docs/game-review.md).
+
+ChessCave uses the [MIT License](LICENSE).
 
 Stockfish uses the GNU General Public License version 3. Any distributed build
 that includes Stockfish must also include its license and the source information

@@ -11,7 +11,7 @@ import {
 import { createPositionImage } from "./chesscave-board-image.mjs";
 
 const ENGINE_PATH = process.env.CHESSCAVE_STOCKFISH_PATH || "stockfish";
-const SERVER_INFO = { name: "chesscave", version: "0.2.0" };
+const SERVER_INFO = { name: "chesscave", version: "0.1.0" };
 const reviewDirectoryArgument = process.argv.indexOf("--review-dir");
 const pieceDirectoryArgument = process.argv.indexOf("--piece-dir");
 const REVIEW_DIRECTORY =

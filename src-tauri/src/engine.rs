@@ -1607,7 +1607,7 @@ mod tests {
             estimated_accuracy: accuracy,
             best_move: None,
         };
-        let moves = vec![move_with_accuracy(1, 0.0), move_with_accuracy(2, 100.0)];
+        let moves = [move_with_accuracy(1, 0.0), move_with_accuracy(2, 100.0)];
         let selected = moves.iter().collect::<Vec<_>>();
 
         assert!((game_accuracy(&selected, &[1.0, 1.0]) - 34.090_909).abs() < 0.000_001);
