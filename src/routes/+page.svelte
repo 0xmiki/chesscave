@@ -602,6 +602,7 @@
 
   main {
     grid-row: 2;
+    height: 100%;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
@@ -776,7 +777,7 @@
     display: flex;
     flex-direction: column;
     width: min(1180px, calc(100% - 56px));
-    height: 100%;
+    height: calc(100vh - 58px);
     min-height: 0;
     margin: 0 auto;
     padding: 30px 0 24px;
@@ -1455,6 +1456,16 @@
       grid-column: 1 / -1;
       width: calc(100% - 5px);
       margin-bottom: 5px;
+    }
+  }
+
+  @media (max-height: 760px) and (min-width: 681px) {
+    .dashboard {
+      overflow-y: auto;
+    }
+
+    .history {
+      flex: 0 0 min(560px, 68vh);
     }
   }
 </style>

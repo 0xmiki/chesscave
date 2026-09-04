@@ -7,6 +7,17 @@ import type {
   Side,
 } from "./types";
 
+export type PlayMode = "codex" | "self";
+
+export function controlledSide(
+  mode: PlayMode,
+  playerSide: Side,
+  sideToMove: Side,
+): Side | null {
+  if (mode === "self") return sideToMove;
+  return playerSide === sideToMove ? playerSide : null;
+}
+
 export const CODEX_PLAY_STORAGE_KEY = "chesscave.codex-play.v1";
 export const CODEX_OPENING_ROTATION_KEY = "chesscave.codex-opening-rotation.v1";
 export const CODEX_MOVE_TIME_MS = 700;

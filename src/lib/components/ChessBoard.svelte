@@ -59,6 +59,8 @@
   } | null>(null);
   let previewArrow = $state<BoardArrow | null>(null);
   let keyboardSquare = $state<string | null>(null);
+  let draggedSquare = $state<string | null>(null);
+  let suppressDragClick = false;
 
   const files = $derived(flipped ? ["h", "g", "f", "e", "d", "c", "b", "a"] : ["a", "b", "c", "d", "e", "f", "g", "h"]);
   const ranks = $derived(flipped ? [1, 2, 3, 4, 5, 6, 7, 8] : [8, 7, 6, 5, 4, 3, 2, 1]);
@@ -392,6 +394,43 @@
     event.preventDefault();
     focusSquare(nextBoardSquare(files, ranks, square, event.key as BoardArrowKey));
   }
+
+  function handleDragStart(event: DragEvent, square: string) {
+    if (compact || !position.get(square as Square)) {
+      event.preventDefault();
+      return;
+    }
+    draggedSquare = square;
+    event.dataTransfer?.setData("text/plain", square);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+    onSquareClick(square);
+  }
+
+  function handleDragOver(event: DragEvent) {
+    if (!draggedSquare) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  }
+
+  function handleDrop(event: DragEvent, square: string) {
+    if (!draggedSquare) return;
+    event.preventDefault();
+    const from = draggedSquare;
+    draggedSquare = null;
+    suppressDragClick = true;
+    if (from !== square) onSquareClick(square);
+  }
+
+  function finishDrag() {
+    draggedSquare = null;
+    window.setTimeout(() => {
+      suppressDragClick = false;
+    }, 0);
+  }
+
+  function handleSquareClick(square: string) {
+    if (!suppressDragClick) onSquareClick(square);
+  }
 </script>
 
 <div
@@ -423,8 +462,10 @@
           class:selected={selected === square}
           class:target={legalTargets.includes(square)}
           class:occupied={Boolean(piece)}
+          class:dragging={draggedSquare === square}
           class="square"
           type="button"
+          draggable={!compact && Boolean(piece)}
           data-board-square={square}
           role={compact ? undefined : "gridcell"}
           tabindex={compact
@@ -437,7 +478,11 @@
           aria-label={`${square}, ${piece ? `${piece.color === "w" ? "white" : "black"} ${pieceNames[piece.type]}` : "empty"}${selected === square ? ", selected" : ""}${legalTargets.includes(square) ? ", legal destination" : ""}`}
           onfocus={() => (keyboardSquare = square)}
           onkeydown={(event) => handleSquareKeydown(event, square)}
-          onclick={() => onSquareClick(square)}
+          ondragstart={(event) => handleDragStart(event, square)}
+          ondragover={handleDragOver}
+          ondrop={(event) => handleDrop(event, square)}
+          ondragend={finishDrag}
+          onclick={() => handleSquareClick(square)}
         >
           {#if fileIndex === 0}
             <span class="rank-coordinate">{rank}</span>
@@ -675,6 +720,14 @@
     isolation: isolate;
   }
 
+  .square.occupied {
+    cursor: grab;
+  }
+
+  .square.dragging {
+    cursor: grabbing;
+  }
+
   .square.light {
     background: #eee7d7;
   }
@@ -694,6 +747,14 @@
 
   .square.selected::before {
     background: rgba(220, 120, 89, 0.68);
+  }
+
+  .square.dragging::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: rgba(220, 120, 89, 0.42);
   }
 
   .move-target {

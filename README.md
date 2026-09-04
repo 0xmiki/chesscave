@@ -24,10 +24,10 @@ device.
 
 ### Play
 
-Play a full game as White or Black. Stockfish chooses the other side's moves,
-and the Codex coach explains the ideas behind them. Turn on Coach view to see
-the evaluation, move labels, and best-move arrows. You can also review earlier
-moves during the game and ask why another move was better.
+Play a full game against Stockfish as White or Black, or choose Self play to
+move both colors. Turn on Coach view to see the evaluation, move labels, and
+best-move arrows. In self-play, the arrow follows the side to move. Sol
+commentary is optional and starts off.
 
 ### Study
 
@@ -77,6 +77,7 @@ started to slip.
 
 - Press Left or Right to move backward or forward through a game. These keys do
   nothing while you are typing in a field.
+- Drag a piece to a legal square, or select the source and destination squares.
 - Right-drag on the board to draw a yellow arrow. Hold Shift for green, Ctrl for
   red, or Alt for blue.
 - Right-click a square to highlight it.

@@ -20,6 +20,7 @@
     CODEX_OPENING_ROTATION_KEY,
     CODEX_PLAY_STORAGE_KEY,
     classifyLiveMove,
+    controlledSide,
     codexPositionContext,
     isNotableComparison,
     lineToSan,
@@ -27,6 +28,7 @@
     playUci,
     scoreLabel,
     type CodexPlayMove,
+    type PlayMode,
   } from "$lib/chess/codex-play";
   import {
     chooseTeachingContinuation,
@@ -105,6 +107,8 @@
   let reflectionFen = $state<string | null>(null);
   let lastMove = $state<{ from: string; to: string } | null>(null);
   let playerSide = $state<Side>("w");
+  let playMode = $state<PlayMode>("codex");
+  let solEnabled = $state(false);
   let gameStarted = $state(false);
   let historyPly = $state<number | null>(null);
   let flipped = $state(false);
@@ -114,6 +118,7 @@
   let engineName = $state("Stockfish");
   let statusText = $state(hasNativeHost() ? "Your move" : "Desktop app required for Stockfish");
   let latestAnalysis = $state<AnalysisResult | null>(null);
+  let selfPlayAnalysis = $state<AnalysisResult | null>(null);
   let latestFeedback = $state<LiveFeedback | null>(null);
   let insight = $state<Insight | null>(null);
   let ideaDraft = $state("");
@@ -172,7 +177,9 @@
   });
   const engineArrow = $derived.by(() => {
     if (reflectionFen) return uciToArrow(insight?.comparison.analysis.bestMove);
-    if (historyPly !== null || !coachingAids || !latestFeedback) return null;
+    if (historyPly !== null || !coachingAids) return null;
+    if (playMode === "self") return uciToArrow(selfPlayAnalysis?.bestMove);
+    if (!latestFeedback) return null;
     return bestAlternativeArrow(
       latestFeedback.move.uci,
       latestFeedback.comparison.analysis.bestMove,
@@ -194,22 +201,30 @@
       ? insight?.comparison.analysis ?? null
       : historyPly !== null
         ? null
-        : latestAnalysis,
+        : playMode === "self"
+          ? selfPlayAnalysis
+          : latestAnalysis,
   );
   const evaluationLine = $derived(
     reflectionFen
       ? insight?.comparison.analysis.lines[0] ?? null
       : historyPly !== null
         ? null
-      : latestFeedback?.comparison.playedLine ?? latestAnalysis?.lines[0] ?? null,
+        : playMode === "self"
+          ? selfPlayAnalysis?.lines[0] ?? null
+          : latestFeedback?.comparison.playedLine ?? latestAnalysis?.lines[0] ?? null,
   );
   const principalLine = $derived(
     lineToSan(activeAnalysis?.fen ?? liveFen, activeAnalysis?.lines[0] ?? null),
   );
   const game = $derived(new Chess(liveFen));
   const latestCodexMove = $derived(
-    moves.slice().reverse().find((move) => move.side !== playerSide) ?? null,
+    playMode === "codex"
+      ? moves.slice().reverse().find((move) => move.side !== playerSide) ?? null
+      : null,
   );
+  const topSide = $derived<Side>(flipped ? "w" : "b");
+  const bottomSide = $derived<Side>(flipped ? "b" : "w");
   const latestCoachNote = $derived(
     latestCodexMove ? coachNotes[latestCodexMove.ply] ?? null : null,
   );
@@ -263,7 +278,7 @@
   }
 
   function scheduleCoachRestart() {
-    if (!hasNativeHost() || coachRestartTimer !== null) return;
+    if (!solEnabled || !hasNativeHost() || coachRestartTimer !== null) return;
     if (coachStartAttempts >= 3) {
       coachUnavailable = true;
       for (const pending of ideaQueue) {
@@ -292,7 +307,7 @@
   }
 
   async function startCoachReliably(restart = false) {
-    if (!hasNativeHost()) return;
+    if (!solEnabled || !hasNativeHost()) return;
     coachUnavailable = false;
     coachStartAttempts += 1;
     try {
@@ -331,6 +346,8 @@
       const saved = JSON.parse(localStorage.getItem(CODEX_PLAY_STORAGE_KEY) ?? "null") as {
         liveFen?: string;
         playerSide?: Side;
+        playMode?: PlayMode;
+        solEnabled?: boolean;
         moves?: CodexPlayMove[];
         note?: string;
         coachingAids?: boolean;
@@ -340,6 +357,9 @@
         liveFen = saved.liveFen;
         moves = saved.moves;
         playerSide = saved.playerSide ?? "w";
+        playMode = saved.playMode ?? "codex";
+        solEnabled = saved.solEnabled ?? false;
+        if (playMode === "self") solEnabled = false;
         flipped = playerSide === "b";
         note = saved.note ?? "Game restored.";
         noteLabel = "Welcome back";
@@ -365,10 +385,14 @@
       }
       engineName = engine.name ?? "Stockfish";
       unlisten = await onCoachEvent(handleCoachEvent);
-      await startCoachReliably();
+      if (solEnabled) await startCoachReliably();
       if (!gameStarted) {
         phase = "ready";
         statusText = "Set up your session";
+      } else if (playMode === "self") {
+        phase = "ready";
+        statusText = `${game.turn() === "w" ? "White" : "Black"} to move`;
+        void requestSelfPlayAnalysis(liveFen, gameSession);
       } else if (game.turn() === playerSide) {
         phase = "ready";
         statusText = "Your move";
@@ -387,15 +411,32 @@
     if (typeof localStorage === "undefined") return;
     localStorage.setItem(
       CODEX_PLAY_STORAGE_KEY,
-      JSON.stringify({ liveFen, playerSide, moves, note, coachingAids, openingSeed }),
+      JSON.stringify({
+        liveFen,
+        playerSide,
+        playMode,
+        solEnabled,
+        moves,
+        note,
+        coachingAids,
+        openingSeed,
+      }),
     );
   });
 
   function handleSquare(square: string) {
-    if (!gameStarted || phase !== "ready" || reflectionFen || historyPly !== null || displayPosition.turn() !== playerSide) return;
+    if (
+      !gameStarted ||
+      phase !== "ready" ||
+      reflectionFen ||
+      historyPly !== null ||
+      controlledSide(playMode, playerSide, displayPosition.turn()) === null
+    ) return;
+    const movableSide = controlledSide(playMode, playerSide, displayPosition.turn());
+    if (!movableSide) return;
     const piece = displayPosition.get(square as Square);
     if (!selected) {
-      if (piece?.color === playerSide) selected = square;
+      if (piece?.color === movableSide) selected = square;
       return;
     }
     if (selected === square) {
@@ -403,12 +444,32 @@
       return;
     }
     if (!legalTargets.includes(square as Square)) {
-      selected = piece?.color === playerSide ? square : null;
+      selected = piece?.color === movableSide ? square : null;
       return;
     }
     const from = selected;
     selected = null;
     void playPlayerMove(from, square);
+  }
+
+  async function requestSelfPlayAnalysis(fen: string, session: number) {
+    if (!coachingAids || playMode !== "self" || !hasNativeHost()) {
+      selfPlayAnalysis = null;
+      return;
+    }
+    try {
+      const analysis = await analyzePosition(fen, 16, 1, CODEX_COMPARE_TIME_MS);
+      if (
+        session === gameSession &&
+        playMode === "self" &&
+        liveFen === fen &&
+        historyPly === null
+      ) {
+        selfPlayAnalysis = analysis;
+      }
+    } catch {
+      if (session === gameSession && liveFen === fen) selfPlayAnalysis = null;
+    }
   }
 
   async function playPlayerMove(from: string, to: string) {
@@ -429,12 +490,13 @@
     ideaDraft = "";
     latestFeedback = null;
     insight = null;
+    selfPlayAnalysis = null;
 
     const bookMove = exactOpening(openingBook, record.after, record.ply);
     const session = gameSession;
     const comparisonPromise = compareMove(before, record.uci, CODEX_COMPARE_TIME_MS)
       .then((comparison) => {
-        if (session !== gameSession) return null;
+        if (session !== gameSession || record.ply !== moves.length) return null;
         const feedback: LiveFeedback = {
           move: record,
           comparison,
@@ -465,9 +527,19 @@
       return;
     }
 
+    if (playMode === "self") {
+      phase = "ready";
+      statusText = `${chess.turn() === "w" ? "White" : "Black"} to move`;
+      noteLabel = "Self play";
+      note = `${record.san}. ${chess.turn() === "w" ? "White" : "Black"} to move.`;
+      void requestSelfPlayAnalysis(record.after, session);
+      await comparisonPromise;
+      return;
+    }
+
     const explanation = await makeCodexMove(token, false);
     const feedback = await comparisonPromise;
-    if (explanation?.session === gameSession) {
+    if (solEnabled && explanation?.session === gameSession) {
       const combined = { ...explanation, playerFeedback: feedback };
       prepareCoachNote(combined);
       queueMoveNote(combined);
@@ -518,11 +590,13 @@
       latestAnalysis = analysis;
       noteLabel = opening?.name ?? currentOpening?.name ?? "Codex's move";
       note = analysis
-        ? `${record.san}. Stockfish considered for ${(analysis.elapsedMs / 1_000).toFixed(1)} seconds; Codex's explanation can arrive while you play.`
+        ? `${record.san}. Stockfish considered for ${(analysis.elapsedMs / 1_000).toFixed(1)} seconds.`
         : `${record.san} continues ${opening?.name ?? "the opening"} without an engine search.`;
       const explanation = { session: gameSession, before, move: record, analysis, opening };
-      prepareCoachNote(explanation);
-      if (explain) queueMoveNote(explanation);
+      if (solEnabled) {
+        prepareCoachNote(explanation);
+        if (explain) queueMoveNote(explanation);
+      }
       if (new Chess(liveFen).isGameOver()) {
         finishGame();
         return explanation;
@@ -598,6 +672,7 @@
   }
 
   function retryCodexMove() {
+    if (playMode === "self") return;
     if (new Chess(liveFen).turn() === playerSide) {
       phase = "ready";
       statusText = "Your move";
@@ -616,7 +691,7 @@
 
   function askAboutMove(question = ideaDraft) {
     const idea = question.trim();
-    if (!idea || !insight || ideaInFlight) return;
+    if (!solEnabled || !idea || !insight || ideaInFlight) return;
     const movePly = insight.move.ply;
     const turnId = nextIdeaTurnId++;
     const existing = ideaThreads[movePly] ?? [];
@@ -737,7 +812,7 @@
   }
 
   function queueMoveNote(explanation: PendingExplanation) {
-    if (explanation.session !== gameSession) return;
+    if (!solEnabled || explanation.session !== gameSession) return;
     if (!explanationQueue.some((queued) => queued.move.ply === explanation.move.ply)) {
       explanationQueue = [...explanationQueue, explanation];
     }
@@ -745,7 +820,7 @@
   }
 
   function drainCoachQueue() {
-    if (!codexReady || coachBusy) return;
+    if (!solEnabled || !codexReady || coachBusy) return;
     const [idea, ...remainingIdeas] = ideaQueue;
     if (idea) {
       ideaQueue = remainingIdeas;
@@ -829,6 +904,7 @@
   }
 
   function handleCoachEvent(event: Record<string, unknown>) {
+    if (!solEnabled) return;
     const method = typeof event.method === "string" ? event.method : "";
     const params = (event.params ?? {}) as Record<string, unknown>;
     if ((event.id === 1 && event.result) || method === "chesscave/ready") {
@@ -936,6 +1012,7 @@
     selected = null;
     moves = [];
     latestAnalysis = null;
+    selfPlayAnalysis = null;
     latestFeedback = null;
     insight = null;
     ideaDraft = "";
@@ -951,11 +1028,13 @@
     activeExplanation = null;
     coachBusy = false;
     if (turnToInterrupt) void interruptCoachTurn(turnToInterrupt).catch(() => {});
-    note = "Choose a side and whether to show engine help.";
+    note = playMode === "self"
+      ? "Move both colors. Coach view shows the best move for the side to move."
+      : "Choose a side and whether to show engine help.";
     noteLabel = "Session setup";
     phase = hasNativeHost() ? "ready" : "offline";
     statusText = hasNativeHost() ? "Set up your session" : "Desktop app required for Stockfish";
-    if (retryCoach) {
+    if (solEnabled && retryCoach) {
       coachStartAttempts = 0;
       coachUnavailable = false;
       void startCoachReliably(true);
@@ -968,12 +1047,57 @@
     flipped = side === "b";
   }
 
+  function choosePlayMode(mode: PlayMode) {
+    if (gameStarted) return;
+    playMode = mode;
+    if (mode === "self" && solEnabled) toggleSol();
+    note = mode === "self"
+      ? "Move both colors. Coach view shows the best move for the side to move."
+      : "Choose a side and whether to show engine help.";
+  }
+
+  function toggleCoachingAids() {
+    coachingAids = !coachingAids;
+    if (coachingAids && playMode === "self" && gameStarted) {
+      void requestSelfPlayAnalysis(liveFen, gameSession);
+    } else if (!coachingAids) {
+      selfPlayAnalysis = null;
+    }
+  }
+
+  function toggleSol() {
+    solEnabled = !solEnabled;
+    if (solEnabled) {
+      coachStartAttempts = 0;
+      void startCoachReliably();
+      return;
+    }
+
+    clearCoachTimers();
+    codexReady = false;
+    coachUnavailable = false;
+    explanationQueue = [];
+    ideaQueue = [];
+    const turnToInterrupt = activeTurnId;
+    activeTurnId = "";
+    if (turnToInterrupt) void interruptCoachTurn(turnToInterrupt).catch(() => {});
+    void stopCoach().catch(() => {});
+  }
+
   function startGame() {
     if (gameStarted || !hasNativeHost()) return;
     gameStarted = true;
     openingSeed = openingRotation;
     openingRotation += 1;
     localStorage.setItem(CODEX_OPENING_ROTATION_KEY, String(openingRotation));
+    if (playMode === "self") {
+      phase = "ready";
+      statusText = "White to move";
+      note = "Move both colors.";
+      noteLabel = "Self play";
+      void requestSelfPlayAnalysis(liveFen, gameSession);
+      return;
+    }
     note = playerSide === "w"
       ? "You have White. Make the first move."
       : "Codex has White and will make the first move.";
@@ -1000,9 +1124,9 @@
     activeTurnId = "";
     if (turnToInterrupt) void interruptCoachTurn(turnToInterrupt).catch(() => {});
     phase = "complete";
-    statusText = "You resigned";
+    statusText = playMode === "self" ? "Game ended" : "You resigned";
     noteLabel = "Game complete";
-    note = "You resigned. The game was saved.";
+    note = playMode === "self" ? "The game was saved." : "You resigned. The game was saved.";
   }
 
   function moveNumber(move: CodexPlayMove) {
@@ -1026,7 +1150,7 @@
     <div class="header-tools">
       <button type="button" onclick={() => (flipped = !flipped)} title="Flip board" aria-label="Flip board"><IconArrowsDownUpRegular /></button>
       <button type="button" onclick={() => newGame()} title="New game" aria-label="New game"><IconArrowCounterClockwiseRegular /></button>
-      <button type="button" onclick={resign} disabled={!gameStarted || phase === "complete"} title="Resign" aria-label="Resign"><IconFlagCheckeredRegular /></button>
+      <button type="button" onclick={resign} disabled={!gameStarted || phase === "complete"} title={playMode === "self" ? "End game" : "Resign"} aria-label={playMode === "self" ? "End game" : "Resign"}><IconFlagCheckeredRegular /></button>
     </div>
   {/snippet}
 
@@ -1036,12 +1160,19 @@
   />
 
   <main>
-    <section class:setup={!gameStarted} class="table" aria-label="Game against Codex">
+    <section class:setup={!gameStarted} class="table" aria-label={playMode === "self" ? "Self-play game" : "Game against Codex"}>
       <div class="board-column">
         <div class="player-row top">
-          <span class="avatar codex">C</span>
-          <span><strong>Codex</strong><small>{engineName} 0.7s · {!hasNativeHost() ? "desktop app only" : codexReady ? coachBusy ? "writing" : "coach ready" : coachUnavailable ? "coach unavailable" : "connecting"}</small></span>
-          {#if displayPosition.inCheck() && displayPosition.turn() !== playerSide}<em>Check</em>{/if}
+          <span class:codex={playMode === "codex"} class:you={playMode === "self"} class="avatar">{playMode === "self" ? topSide.toUpperCase() : "C"}</span>
+          <span>
+            <strong>{playMode === "self" ? topSide === "w" ? "White" : "Black" : "Codex"}</strong>
+            <small>
+              {playMode === "self"
+                ? "Self play"
+                : `${engineName} 0.7s${solEnabled ? ` · ${codexReady ? coachBusy ? "writing" : "Sol ready" : coachUnavailable ? "Sol unavailable" : "connecting"}` : ""}`}
+            </small>
+          </span>
+          {#if displayPosition.inCheck() && displayPosition.turn() === topSide}<em>Check</em>{/if}
         </div>
         <div class:with-evaluation={coachingAids} class="board-stage">
           {#if coachingAids}
@@ -1053,7 +1184,7 @@
               />
             </div>
           {/if}
-          <div class:waiting={phase === "opponent-thinking" && historyPly === null} class="board-wrap">
+          <div class:waiting={playMode === "codex" && phase === "opponent-thinking" && historyPly === null} class="board-wrap">
             <ChessBoard
               fen={displayFen}
               {flipped}
@@ -1064,7 +1195,7 @@
               {engineArrow}
               onSquareClick={handleSquare}
             />
-            {#if phase === "opponent-thinking" && historyPly === null}
+            {#if playMode === "codex" && phase === "opponent-thinking" && historyPly === null}
               <div class="thinking-mark" aria-hidden="true"><i></i><i></i><i></i></div>
             {/if}
           </div>
@@ -1092,9 +1223,12 @@
           </nav>
         {/if}
         <div class="player-row bottom">
-          <span class="avatar you">Y</span>
-          <span><strong>You</strong><small>{playerSide === "w" ? "White" : "Black"}</small></span>
-          {#if displayPosition.inCheck() && displayPosition.turn() === playerSide}<em>Check</em>{/if}
+          <span class="avatar you">{playMode === "self" ? bottomSide.toUpperCase() : "Y"}</span>
+          <span>
+            <strong>{playMode === "self" ? bottomSide === "w" ? "White" : "Black" : "You"}</strong>
+            <small>{playMode === "self" ? "Self play" : playerSide === "w" ? "White" : "Black"}</small>
+          </span>
+          {#if displayPosition.inCheck() && displayPosition.turn() === bottomSide}<em>Check</em>{/if}
         </div>
       </div>
 
@@ -1162,17 +1296,17 @@
         {:else}
           <div class="note-copy">
             {#if !gameStarted}
-            <h1>Choose a side and start the game.</h1>
+            <h1>{playMode === "self" ? "Play both sides." : "Choose a side and start the game."}</h1>
           {:else if historyPly !== null}
             <h1>{historyMove ? `${moveNumber(historyMove)}${historyMove.side === "w" ? "." : "…"} ${historyMove.san}` : "Starting position"}</h1>
-            {#if historyCoachNote}
+            {#if solEnabled && historyCoachNote}
               <p>{historyCoachNote.text}</p>
             {:else if historyMove}
               <p>{historyMove.side === "w" ? "White" : "Black"} played {historyMove.san}. Use the arrows to move through the game or return to the live board.</p>
             {/if}
           {:else if latestCodexMove}
             <h1>{latestCoachNote?.heading ?? latestCodexMove.san}</h1>
-            {#if latestCoachNote}<p>{latestCoachNote.text}</p>{/if}
+            {#if solEnabled && latestCoachNote}<p>{latestCoachNote.text}</p>{/if}
           {:else}
             <h1>{moves.at(-1)?.san}</h1>
             {#if note}<p class:preserve={note.includes("\n")}>{note}</p>{/if}
@@ -1181,10 +1315,14 @@
 
           {#if phase === "complete"}
             <button class="continue" type="button" onclick={() => newGame()}>Play again</button>
-          {:else if phase === "offline" && game.turn() !== playerSide && hasNativeHost()}
+          {:else if playMode === "codex" && phase === "offline" && game.turn() !== playerSide && hasNativeHost()}
             <button class="continue" type="button" onclick={retryCodexMove}>Try Codex's move again</button>
           {:else if !gameStarted}
             <div class="game-setup">
+              <div class="mode-choice" aria-label="Choose play mode">
+                <button class:chosen={playMode === "codex"} type="button" onclick={() => choosePlayMode("codex")}>Vs Codex</button>
+                <button class:chosen={playMode === "self"} type="button" onclick={() => choosePlayMode("self")}>Self play</button>
+              </div>
               <div class="coach-setting">
                 <span><strong>Coach view</strong><small>Evaluation, move marks, and best-move arrows</small></span>
                 <button
@@ -1193,24 +1331,51 @@
                   aria-checked={coachingAids}
                   aria-label="Coach view"
                   class:on={coachingAids}
-                  onclick={() => (coachingAids = !coachingAids)}
+                  onclick={toggleCoachingAids}
                 ><i></i></button>
               </div>
-              <div class="side-choice" aria-label="Choose a side">
-                <button class:chosen={playerSide === "w"} type="button" onclick={() => chooseSide("w")}>White</button>
-                <button class:chosen={playerSide === "b"} type="button" onclick={() => chooseSide("b")}>Black</button>
+              {#if playMode === "codex"}
+                <div class="coach-setting">
+                  <span><strong>Sol commentary</strong><small>Explain moves while you play</small></span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={solEnabled}
+                    aria-label="Sol commentary"
+                    class:on={solEnabled}
+                    onclick={toggleSol}
+                  ><i></i></button>
+                </div>
+              {/if}
+              <div class="side-choice" aria-label={playMode === "self" ? "Choose board orientation" : "Choose a side"}>
+                <button class:chosen={playerSide === "w"} type="button" onclick={() => chooseSide("w")}>{playMode === "self" ? "White below" : "White"}</button>
+                <button class:chosen={playerSide === "b"} type="button" onclick={() => chooseSide("b")}>{playMode === "self" ? "Black below" : "Black"}</button>
               </div>
               <button class="start-session" type="button" disabled={!hasNativeHost()} onclick={startGame}>Begin session</button>
             </div>
           {/if}
         {/if}
 
-        {#if !reflectionFen && historyPly === null && insight && phase !== "complete"}
+        {#if solEnabled && !reflectionFen && historyPly === null && insight && phase !== "complete"}
           <button class="insight-invitation" type="button" onclick={openInsight}>
             <span>Earlier · {insight.move.san}</span>
             <strong>Compare your move with Stockfish</strong>
             <em>Open</em>
           </button>
+        {/if}
+
+        {#if playMode === "codex" && gameStarted && !reflectionFen && historyPly === null && phase !== "complete"}
+          <div class="sol-live-setting">
+            <span>Sol commentary</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={solEnabled}
+              aria-label="Sol commentary"
+              class:on={solEnabled}
+              onclick={toggleSol}
+            ><i></i></button>
+          </div>
         {/if}
 
         {#if gameStarted && historyPly === null && !reflectionFen}
@@ -1227,7 +1392,7 @@
       <div class="moves">
         {#if !moves.length}<span class="empty-moves">No moves yet.</span>{/if}
         {#each moves as move}
-          <button type="button" class:active={historyPly === move.ply} class:player-move={move.side === playerSide} onclick={() => browsePly(move.ply)}>{move.ply % 2 === 1 ? `${moveNumber(move)}.` : ""} {move.san}</button>
+          <button type="button" class:active={historyPly === move.ply} class:player-move={playMode === "self" || move.side === playerSide} onclick={() => browsePly(move.ply)}>{move.ply % 2 === 1 ? `${moveNumber(move)}.` : ""} {move.san}</button>
         {/each}
       </div>
       <span class="turn-count">{Math.ceil(moves.length / 2)} moves</span>
@@ -1334,8 +1499,15 @@
   .coach-setting button i { position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform var(--motion-fast) ease-out, background var(--motion-fast) ease-out; }
   .coach-setting button.on { border-color: var(--sage); background: color-mix(in srgb, var(--sage) 18%, var(--pearl-raised)); }
   .coach-setting button.on i { background: var(--sage); transform: translateX(16px); }
-  .side-choice { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line-strong); border-radius: 3px; overflow: hidden; }
-  .side-choice button { border: 0; padding: 9px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }.side-choice button + button { border-left: 1px solid var(--line-strong); }.side-choice button.chosen { color: var(--pearl); background: var(--ink); }
+  .sol-live-setting { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+  .sol-live-setting button { position: relative; width: 34px; height: 18px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0; background: var(--pearl-raised); cursor: pointer; }
+  .sol-live-setting button i { position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform var(--motion-fast) ease-out, background var(--motion-fast) ease-out; }
+  .sol-live-setting button.on { border-color: var(--sage); background: color-mix(in srgb, var(--sage) 18%, var(--pearl-raised)); }
+  .sol-live-setting button.on i { background: var(--sage); transform: translateX(16px); }
+  .mode-choice, .side-choice { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line-strong); border-radius: 3px; overflow: hidden; }
+  .mode-choice button, .side-choice button { border: 0; padding: 9px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
+  .mode-choice button + button, .side-choice button + button { border-left: 1px solid var(--line-strong); }
+  .mode-choice button.chosen, .side-choice button.chosen { color: var(--paper); background: var(--ink); }
   .start-session { border: 1px solid var(--ink); border-radius: 3px; padding: 10px 14px; color: var(--pearl); background: var(--ink); font-size: 11px; font-weight: 700; cursor: pointer; }
   .start-session:disabled { opacity: .42; cursor: default; }
   .line-glimpse { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; padding-top: 18px; border-top: 1px solid var(--line); }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Chess } from "chess.js";
 import {
+  controlledSide,
   codexPositionContext,
   classifyLiveMove,
   isNotableComparison,
@@ -11,6 +12,12 @@ import {
 } from "./codex-play";
 
 describe("Codex play foundations", () => {
+  test("lets self-play control both colors", () => {
+    expect(controlledSide("self", "w", "w")).toBe("w");
+    expect(controlledSide("self", "w", "b")).toBe("b");
+    expect(controlledSide("codex", "w", "w")).toBe("w");
+    expect(controlledSide("codex", "w", "b")).toBeNull();
+  });
   test("plays a legal UCI move and rejects malformed moves", () => {
     expect(playUci(new Chess().fen(), "e2e4")?.san).toBe("e4");
     expect(playUci(new Chess().fen(), "e2e5")).toBeNull();
