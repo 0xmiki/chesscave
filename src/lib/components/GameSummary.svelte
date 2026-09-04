@@ -97,7 +97,6 @@
 <aside class="summary" aria-label="Game summary">
   <header>
     <div>
-      <span>Review</span>
       <strong>Game at a glance</strong>
     </div>
     {#if busy}
@@ -174,10 +173,6 @@
     </section>
 
     <section class="phases" aria-label="Accuracy by game phase">
-      <div class="section-heading">
-        <span>By phase</span>
-        <small>Accuracy</small>
-      </div>
       {#each REVIEW_PHASES as phase}
         <div class="phase-row">
           <span>{phaseLabels[phase]}</span>
@@ -230,15 +225,6 @@
     gap: 2px;
   }
 
-  header span:first-child,
-  .section-heading span {
-    color: var(--coral-dark);
-    font-size: 9px;
-    font-weight: 750;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-  }
-
   header strong {
     font-family: var(--display);
     font-size: 16px;
@@ -250,7 +236,7 @@
     gap: 6px;
     align-items: center;
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 0;
     text-transform: none;
   }
@@ -325,7 +311,7 @@
     position: absolute;
     left: 7px;
     color: var(--faint);
-    font-size: 8px;
+    font-size: 11px;
     pointer-events: none;
   }
 
@@ -342,7 +328,7 @@
 
   .players-label {
     color: var(--ink-soft);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 650;
   }
 
@@ -374,7 +360,7 @@
   .player strong {
     max-width: 100%;
     overflow: hidden;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -384,7 +370,7 @@
     max-width: 100%;
     overflow: hidden;
     color: var(--muted);
-    font-size: 8px;
+    font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -406,7 +392,7 @@
 
   .accuracy span {
     color: var(--ink-soft);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 650;
   }
 
@@ -429,14 +415,14 @@
     gap: 8px;
     align-items: center;
     color: var(--ink-soft);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
   }
 
   .classification-row > strong,
   .phase-row > strong {
     color: var(--ink);
-    font-size: 10px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
     text-align: center;
   }
@@ -452,25 +438,13 @@
     border-top: 1px solid var(--line);
   }
 
-  .section-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 7px;
-  }
-
-  .section-heading small {
-    color: var(--faint);
-    font-size: 8px;
-  }
-
   .phase-row {
     min-height: 27px;
   }
 
   .phase-row > span {
     color: var(--ink-soft);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
   }
 

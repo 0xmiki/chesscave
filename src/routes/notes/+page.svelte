@@ -1463,8 +1463,6 @@
 
   <AppHeader
     active="notes"
-    title={selectedPage ? notePageTitle(selectedPage) : "Notes"}
-    subtitle="Private notes on this device"
     actions={headerActions}
   />
 
@@ -1481,7 +1479,6 @@
     <aside class:open={drawerOpen} aria-label="Notes sidebar">
       <div class="sidebar-heading">
         <div>
-          <span>Library</span>
           <strong>Pages</strong>
         </div>
         <button
@@ -1534,7 +1531,6 @@
         </div>
       {:else if selectedPage}
         <article>
-          <span class="page-kicker">Note</span>
           <textarea
             class="page-title"
             bind:this={pageTitleElement}
@@ -1609,14 +1605,14 @@
     position: fixed;
     inset: 0;
     display: grid;
-    grid-template-rows: 68px minmax(0, 1fr);
+    grid-template-rows: 58px minmax(0, 1fr);
     color: var(--ink);
     background: var(--paper);
   }
 
   .header-actions {
     display: flex;
-    gap: 12px;
+    gap: 8px;
     align-items: center;
   }
 
@@ -1650,7 +1646,7 @@
     gap: 6px;
     align-items: center;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     white-space: nowrap;
   }
 
@@ -1666,7 +1662,7 @@
   }
 
   .header-actions button {
-    min-height: 34px;
+    min-height: 29px;
     border: 1px solid var(--line-strong);
     border-radius: 999px;
     color: var(--ink-soft);
@@ -1720,7 +1716,7 @@
     min-width: 0;
     min-height: 0;
     border-right: 1px solid var(--line);
-    background: #ece6dc;
+    background: var(--sidebar-bg);
   }
 
   .sidebar-heading {
@@ -1734,15 +1730,6 @@
   .sidebar-heading > div {
     display: grid;
     gap: 2px;
-  }
-
-  .sidebar-heading span,
-  .page-kicker {
-    color: var(--coral-dark);
-    font-size: 9px;
-    font-weight: 750;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
   }
 
   .sidebar-heading strong {
@@ -1796,7 +1783,7 @@
     padding: 14px 4px 18px;
     border-top: 1px solid rgba(124, 115, 105, 0.2);
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .local-note span {
@@ -1819,12 +1806,7 @@
     width: min(760px, calc(100% - 72px));
     min-height: 100%;
     margin: 0 auto;
-    padding: 78px 0 0;
-  }
-
-  .page-kicker {
-    display: block;
-    margin-bottom: 12px;
+    padding: 60px 0 0;
   }
 
   .page-title {
@@ -2042,7 +2024,7 @@
 
   @media (max-width: 760px) {
     .notes-app {
-      grid-template-rows: 62px minmax(0, 1fr);
+      grid-template-rows: 54px minmax(0, 1fr);
     }
 
     .notes-workspace {

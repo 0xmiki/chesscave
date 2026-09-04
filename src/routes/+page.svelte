@@ -39,13 +39,6 @@
     hour: "numeric",
     minute: "2-digit",
   });
-  const syncDateFormatter = new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
   let hydrated = $state(false);
   let username = $state("");
   let usernameInput = $state("");
@@ -59,9 +52,6 @@
   let activeDayKey = $state("");
   let dayScroller = $state<HTMLElement | null>(null);
 
-  const profileTitle = $derived(
-    dashboard?.profile.name || dashboard?.profile.username || "Your Chess.com games",
-  );
   const rapidGames = $derived(gamesForTimeClass(dashboard, "rapid"));
   const blitzGames = $derived(gamesForTimeClass(dashboard, "blitz"));
   const activeGames = $derived(
@@ -169,6 +159,22 @@
     if (dayScroller) dayScroller.scrollTop = 0;
   }
 
+  function handleHistoryTabKeydown(event: KeyboardEvent) {
+    const tabs = timeClasses.map((item) => item.id);
+    const current = tabs.indexOf(activeTimeClass);
+    let next = current;
+    if (event.key === "ArrowRight") next = (current + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") next = (current - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = tabs[next];
+    void selectTimeClass(nextTab).then(() => {
+      document.getElementById(`history-tab-${nextTab}`)?.focus();
+    });
+  }
+
   function updateVisibleDay(event: Event) {
     const scroller = event.currentTarget as HTMLElement;
     const marker = scroller.getBoundingClientRect().top + 36;
@@ -252,18 +258,14 @@
     }
   }
 
-  function formatSyncDate(timestamp: number) {
-    return syncDateFormatter.format(new Date(timestamp));
-  }
-
   function formatJoined(timestamp: number | null) {
     if (!timestamp) return null;
     return new Date(timestamp * 1000).getFullYear();
   }
 
   function trendLabel(change: number | null) {
-    if (change === null) return "Recent form";
-    return `${change > 0 ? "+" : ""}${change} recently`;
+    if (change === null) return "";
+    return `${change > 0 ? "+" : ""}${change}`;
   }
 </script>
 
@@ -292,13 +294,14 @@
           class="refresh-action"
           type="button"
           disabled={syncing}
+          aria-label={syncing ? "Refreshing Chess.com games" : "Refresh Chess.com games"}
+          title={syncing ? "Refreshing Chess.com games" : "Refresh Chess.com games"}
           onclick={() => void syncProfile(username)}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19 7v5h-5M5 17v-5h5"></path>
             <path d="M17.5 9A6.5 6.5 0 0 0 6 7.5L5 12m14 0-1 4.5A6.5 6.5 0 0 1 6.5 15"></path>
           </svg>
-          {syncing ? "Refreshing" : "Refresh"}
         </button>
       </div>
     {/if}
@@ -306,10 +309,6 @@
 
   <AppHeader
     active="home"
-    title={dashboard ? profileTitle : "Your Chess.com games"}
-    subtitle={dashboard
-      ? `Chess.com · Updated ${formatSyncDate(dashboard.fetchedAtMs)}`
-      : "Connect a public Chess.com profile"}
     actions={headerActions}
   />
 
@@ -317,7 +316,6 @@
     {#if hydrated && !dashboard}
       <section class="onboarding" aria-labelledby="onboarding-title">
         <div class="onboarding-copy">
-          <span class="eyebrow">CHESS.COM LIBRARY</span>
           <h2 id="onboarding-title">Load your Chess.com games.</h2>
           <p>
             Enter a public username to see recent Rapid and Blitz games. Select a
@@ -383,7 +381,6 @@
             {/if}
           </div>
           <div class="identity">
-            <span class="eyebrow">CHESS.COM PROFILE</span>
             <div class="profile-name">
               <h2>{dashboard.profile.name || dashboard.profile.username}</h2>
               {#if dashboard.profile.title}<span>{dashboard.profile.title}</span>{/if}
@@ -410,10 +407,14 @@
               <header>
                 <div>
                   <span>{timeClass.label}</span>
-                  <strong>{stats?.last?.rating ?? "—"}</strong>
-                </div>
-                <div class:positive={change !== null && change > 0} class:negative={change !== null && change < 0} class="trend">
-                  {trendLabel(change)}
+                  <div class="rating-value">
+                    <strong>{stats?.last?.rating ?? "—"}</strong>
+                    {#if change !== null}
+                      <em class:positive={change > 0} class:negative={change < 0} class="trend">
+                        {trendLabel(change)}
+                      </em>
+                    {/if}
+                  </div>
                 </div>
               </header>
               <RatingSparkline
@@ -432,12 +433,10 @@
 
         <section
           class="history"
-          class:blitz-history={activeTimeClass === "blitz"}
           aria-labelledby="game-history-title"
         >
           <div class="history-toolbar">
             <div class="history-position" aria-live="polite">
-              <span>GAME HISTORY</span>
               <div>
                 <h3 id="game-history-title">{activeGameDay?.label ?? "Game history"}</h3>
                 <span>
@@ -447,17 +446,19 @@
                 </span>
               </div>
             </div>
-            <div class="history-tabs" role="tablist" aria-label="Game type">
+            <div class="history-tabs" role="tablist" aria-label="Game type" tabindex="-1" onkeydown={handleHistoryTabKeydown}>
               {#each timeClasses as timeClass}
                 <button
                   type="button"
+                  id={`history-tab-${timeClass.id}`}
                   role="tab"
                   aria-selected={activeTimeClass === timeClass.id}
+                  aria-controls="game-history-panel"
+                  tabindex={activeTimeClass === timeClass.id ? 0 : -1}
                   class:active={activeTimeClass === timeClass.id}
                   onclick={() => void selectTimeClass(timeClass.id)}
                 >
                   {timeClass.label}
-                  <span>{gamesFor(timeClass.id).length}</span>
                 </button>
               {/each}
             </div>
@@ -466,8 +467,9 @@
           {#if activeGames.length}
             <div
               class="history-table"
+              id="game-history-panel"
               role="tabpanel"
-              aria-label={`${activeTimeClass} game history`}
+              aria-labelledby={`history-tab-${activeTimeClass}`}
               bind:this={dayScroller}
               onscroll={updateVisibleDay}
             >
@@ -593,7 +595,7 @@
     position: fixed;
     inset: 0;
     display: grid;
-    grid-template-rows: 68px minmax(0, 1fr);
+    grid-template-rows: 58px minmax(0, 1fr);
     color: var(--ink);
     background: var(--paper);
   }
@@ -612,8 +614,8 @@
   }
 
   .top-actions button {
-    min-height: 36px;
-    padding: 0 14px;
+    min-height: 29px;
+    padding: 0 11px;
     border-radius: 999px;
     font-size: 11px;
     font-weight: 650;
@@ -628,11 +630,14 @@
 
   .refresh-action {
     display: inline-flex;
-    gap: 7px;
+    gap: 5px;
     align-items: center;
     border: 1px solid var(--ink);
     color: var(--pearl-raised);
     background: var(--ink);
+    width: 29px;
+    justify-content: center;
+    padding: 0;
   }
 
   .refresh-action:disabled {
@@ -641,8 +646,8 @@
   }
 
   .refresh-action svg {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
     fill: none;
     stroke: currentColor;
     stroke-linecap: round;
@@ -665,13 +670,6 @@
     padding: 72px 0 96px;
   }
 
-  .eyebrow {
-    color: var(--coral-dark);
-    font-size: 9px;
-    font-weight: 750;
-    letter-spacing: 0.13em;
-  }
-
   .onboarding-copy h2,
   .identity h2 {
     margin: 0;
@@ -681,7 +679,7 @@
 
   .onboarding-copy h2 {
     max-width: 12ch;
-    margin-top: 12px;
+    margin-top: 0;
     font-size: clamp(43px, 5vw, 68px);
     line-height: 0.99;
   }
@@ -765,7 +763,7 @@
     display: block;
     margin-top: 12px;
     color: var(--faint);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .form-error {
@@ -836,7 +834,7 @@
     border: 0;
     color: inherit;
     background: transparent;
-    font-size: 10px;
+    font-size: 11px;
     cursor: pointer;
   }
 
@@ -893,7 +891,7 @@
     border-radius: 4px;
     color: var(--pearl-raised);
     background: var(--coral-dark);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 750;
   }
 
@@ -937,7 +935,7 @@
   .rating-card > header {
     display: flex;
     align-items: start;
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
   .rating-card header > div:first-child {
@@ -947,7 +945,7 @@
 
   .rating-card header span {
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -960,10 +958,16 @@
     line-height: 1.05;
   }
 
+  .rating-value {
+    display: flex;
+    gap: 7px;
+    align-items: baseline;
+  }
+
   .trend {
-    margin-top: 3px;
     color: var(--faint);
-    font-size: 10px;
+    font-size: 11px;
+    font-style: normal;
     font-variant-numeric: tabular-nums;
   }
 
@@ -976,7 +980,7 @@
     padding-top: 12px;
     border-top: 1px solid var(--line);
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .rating-card footer strong {
@@ -1019,13 +1023,6 @@
     gap: 4px;
   }
 
-  .history-position > span {
-    color: var(--coral-dark);
-    font-size: 8px;
-    font-weight: 750;
-    letter-spacing: 0.12em;
-  }
-
   .history-position > div {
     display: flex;
     gap: 10px;
@@ -1041,7 +1038,7 @@
 
   .history-position > div > span {
     color: var(--faint);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .history-tabs {
@@ -1068,23 +1065,9 @@
     cursor: pointer;
   }
 
-  .history-tabs button span {
-    color: var(--faint);
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-  }
-
   .history-tabs button.active {
     color: var(--pearl-raised);
-    background: var(--sage);
-  }
-
-  .history-tabs button.active span {
-    color: rgba(255, 255, 255, 0.72);
-  }
-
-  .blitz-history .history-tabs button.active {
-    background: var(--ochre);
+    background: var(--ink);
   }
 
   .history-header,
@@ -1105,7 +1088,7 @@
     color: var(--faint);
     background: var(--paper);
     box-shadow: 0 1px 0 rgba(68, 53, 42, 0.04);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 650;
   }
 
@@ -1148,7 +1131,7 @@
   }
 
   .history-row:hover:not(:disabled) {
-    background: rgba(255, 253, 248, 0.82);
+    background: color-mix(in srgb, var(--pearl-raised) 82%, transparent);
   }
 
   .history-row:focus-visible {
@@ -1166,11 +1149,7 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    color: var(--sage);
-  }
-
-  .blitz-history .history-time {
-    color: var(--ochre);
+    color: var(--ink-soft);
   }
 
   .history-time > svg {
@@ -1199,7 +1178,7 @@
   .history-time small {
     display: none;
     color: var(--faint);
-    font-size: 9px;
+    font-size: 11px;
     white-space: nowrap;
   }
 
@@ -1241,7 +1220,7 @@
 
   .history-players > span > small {
     color: var(--sage);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0;
   }
@@ -1323,7 +1302,7 @@
 
   .history-result > small {
     color: var(--faint);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 550;
   }
 
@@ -1362,7 +1341,7 @@
 
   .review-status small {
     color: var(--faint);
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 550;
   }
 
@@ -1406,7 +1385,7 @@
 
   @media (max-width: 680px) {
     .app-shell {
-      grid-template-rows: 62px minmax(0, 1fr);
+      grid-template-rows: 54px minmax(0, 1fr);
     }
 
     main {
@@ -1438,7 +1417,7 @@
     }
 
     .refresh-action {
-      width: 36px;
+      width: 29px;
       justify-content: center;
       padding: 0;
       font-size: 0;

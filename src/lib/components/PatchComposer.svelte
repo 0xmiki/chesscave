@@ -70,10 +70,9 @@
   }
 </script>
 
-<div class="patch-composer" role="tabpanel">
+<div id="study-panel-patch" class="patch-composer" role="tabpanel" aria-labelledby="study-tab-patch">
   <div class="patch-source">
     <div class="source-copy">
-      <span>MAKE A DRILL</span>
       <strong>{positionLabel}</strong>
       <small>
         {playedMove ? `You played ${playedMove}` : "Choose a move to practice"}
@@ -235,12 +234,11 @@
     min-width: 0;
   }
 
-  .source-copy > span,
   .preview-kicker > span,
   .reveal-block > span,
   .variation-block > span {
     color: var(--coral-dark);
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 780;
     letter-spacing: 0.12em;
   }
@@ -257,7 +255,7 @@
   .preview-kicker small,
   .question small {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
     line-height: 1.4;
   }
 
@@ -274,7 +272,7 @@
     border-radius: 999px;
     color: var(--muted);
     background: var(--paper);
-    font-size: 8px;
+    font-size: 11px;
   }
 
   .decision-facts strong {
@@ -353,7 +351,7 @@
     align-items: center;
     min-height: 20px;
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
     line-height: 1.4;
   }
 
@@ -401,7 +399,7 @@
 
   .answer-line span {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .answer-line strong {
@@ -420,7 +418,7 @@
   .diagnosis-preview > span,
   .saved-state > div > span {
     color: var(--coral-dark);
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 780;
     letter-spacing: 0.12em;
   }
@@ -435,7 +433,7 @@
 
   .diagnosis-preview small {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .reveal-block,
@@ -463,7 +461,7 @@
   .patch-error {
     margin: 0;
     color: var(--danger);
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1.45;
   }
 

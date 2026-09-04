@@ -294,7 +294,7 @@
 
   .tree-row:hover,
   .tree-row.selected {
-    background: rgba(255, 253, 248, 0.64);
+    background: color-mix(in srgb, var(--pearl-raised) 64%, transparent);
   }
 
   .tree-row.selected {

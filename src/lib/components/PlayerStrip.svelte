@@ -101,13 +101,13 @@
 
   .identity span {
     color: #858b82;
-    font-size: 9px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
   }
 
   .identity small {
     color: #70766d;
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 750;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -151,12 +151,6 @@
     text-align: right;
   }
 
-  .player-strip.active .clock {
-    box-shadow:
-      0 0 0 2px rgba(146, 188, 116, 0.45),
-      0 1px 0 rgba(255, 255, 255, 0.05) inset;
-  }
-
   .player-strip.active .identity small {
     color: #91b27b;
   }
@@ -184,12 +178,12 @@
 
   .identity span {
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .identity small {
     color: var(--faint);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0;
     text-transform: capitalize;
@@ -199,15 +193,15 @@
   .white .clock {
     min-width: 86px;
     height: 32px;
-    border: 1px solid var(--line);
+    border: 1px solid #d9d1c6;
     border-radius: 8px;
-    color: var(--ink);
-    background: var(--pearl-raised);
+    color: #29241f;
+    background: #fffdf8;
     box-shadow: none;
   }
 
   .black .clock {
-    color: var(--pearl-raised);
+    color: #fffdf8;
     border-color: #403a34;
     background: #403a34;
   }
@@ -216,11 +210,6 @@
     min-width: 50px;
     font-size: 16px;
     font-weight: 700;
-  }
-
-  .player-strip.active .clock {
-    border-color: var(--coral);
-    box-shadow: 0 0 0 2px var(--coral-soft);
   }
 
   .player-strip.active .identity small {

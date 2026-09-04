@@ -170,7 +170,7 @@
   .variation-label {
     padding-top: 6px;
     color: #9abd87;
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 900;
     letter-spacing: 0.1em;
   }
@@ -189,7 +189,7 @@
 
   .variation-moves small {
     color: #788274;
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 750;
   }
 
@@ -252,7 +252,7 @@
   .number {
     padding: 0;
     color: var(--faint);
-    font-size: 10px;
+    font-size: 11px;
     text-align: center;
   }
 
@@ -287,7 +287,7 @@
 
   .variation-label {
     color: var(--sage);
-    font-size: 8px;
+    font-size: 11px;
   }
 
   .variation-moves {

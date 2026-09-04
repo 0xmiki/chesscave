@@ -182,14 +182,14 @@
 
   .command-heading span {
     color: var(--coral-dark);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 750;
     letter-spacing: 0.14em;
     text-transform: uppercase;
   }
 
   .command-heading small {
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .command-options {
@@ -252,7 +252,7 @@
   button small {
     overflow: hidden;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

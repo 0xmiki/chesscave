@@ -69,7 +69,7 @@
     align-items: center;
     overflow: hidden;
     color: var(--faint);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   svg {
@@ -99,7 +99,7 @@
   }
 
   circle {
-    fill: var(--coral);
+    fill: var(--sage);
     stroke: var(--pearl-raised);
     stroke-width: 1.5;
     vector-effect: non-scaling-stroke;

@@ -3,8 +3,8 @@
 
 :root {
   font-family: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
-  color: #29241f;
-  background: #f1ede5;
+  color: var(--ink);
+  background: var(--paper);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -14,8 +14,8 @@
   --pearl-raised: #fffdf8;
   --ink: #29241f;
   --ink-soft: #544c44;
-  --muted: #7c7369;
-  --faint: #a59b90;
+  --muted: #696159;
+  --faint: #837a71;
   --line: #d9d1c6;
   --line-strong: #c9beb1;
   --coral: #cc6b50;
@@ -23,12 +23,37 @@
   --coral-soft: #f3ded5;
   --sage: #77816a;
   --sage-soft: #e4e8dc;
-  --ochre: #b8863e;
   --danger: #a94f42;
+  --coral-line: #e5b9a9;
+  --danger-line: #df9e8b;
+  --header-bg: rgba(251, 248, 242, 0.97);
+  --sidebar-bg: #ece6dc;
   --display: "Fraunces Variable", Fraunces, Georgia, serif;
   --interface: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
   --motion-fast: 90ms;
   --motion-standard: 140ms;
+}
+
+:root[data-theme="dark"] {
+  --paper: #111210;
+  --pearl: #171815;
+  --pearl-raised: #1d1e1a;
+  --ink: #e9e8e2;
+  --ink-soft: #c5c4bd;
+  --muted: #929089;
+  --faint: #74726c;
+  --line: #292a26;
+  --line-strong: #383a34;
+  --coral: #b96853;
+  --coral-dark: #cf806a;
+  --coral-soft: #2c211d;
+  --sage: #8d9981;
+  --sage-soft: #252b22;
+  --danger: #d57869;
+  --coral-line: #58392f;
+  --danger-line: #633c34;
+  --header-bg: rgba(23, 24, 21, 0.97);
+  --sidebar-bg: #141512;
 }
 
 * {
@@ -72,7 +97,7 @@ summary {
 
 ::selection {
   color: var(--ink);
-  background: #edc2b3;
+  background: var(--coral-soft);
 }
 
 @media (prefers-reduced-motion: reduce) {

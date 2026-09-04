@@ -12,6 +12,7 @@
     type BoardHighlight,
   } from "$lib/chess/arrows";
   import type { MoveClassification } from "$lib/chess/types";
+  import { nextBoardSquare, type BoardArrowKey } from "$lib/chess/board-keyboard";
   import ChessPiece from "./ChessPiece.svelte";
   import MoveBadge from "./MoveBadge.svelte";
 
@@ -57,10 +58,22 @@
     highlightColor: Exclude<BoardArrowColor, "engine">;
   } | null>(null);
   let previewArrow = $state<BoardArrow | null>(null);
+  let keyboardSquare = $state<string | null>(null);
 
   const files = $derived(flipped ? ["h", "g", "f", "e", "d", "c", "b", "a"] : ["a", "b", "c", "d", "e", "f", "g", "h"]);
   const ranks = $derived(flipped ? [1, 2, 3, 4, 5, 6, 7, 8] : [8, 7, 6, 5, 4, 3, 2, 1]);
   const position = $derived(new Chess(fen));
+  const pieceNames: Record<PieceSymbol, string> = {
+    p: "pawn",
+    n: "knight",
+    b: "bishop",
+    r: "rook",
+    q: "queen",
+    k: "king",
+  };
+  const boardLabel = $derived(
+    `Chess board. ${position.turn() === "w" ? "White" : "Black"} to move${position.inCheck() ? " and in check" : ""}. Use arrow keys to move between squares.`,
+  );
 
   $effect(() => {
     const target = piecesFromFen(fen);
@@ -358,13 +371,36 @@
     drawing = null;
     previewArrow = null;
   }
+
+  function focusSquare(square: string) {
+    keyboardSquare = square;
+    void tick().then(() => {
+      boardElement
+        ?.querySelector<HTMLButtonElement>(`[data-board-square="${square}"]`)
+        ?.focus();
+    });
+  }
+
+  function handleSquareKeydown(event: KeyboardEvent, square: string) {
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(
+        event.key,
+      )
+    ) {
+      return;
+    }
+    event.preventDefault();
+    focusSquare(nextBoardSquare(files, ranks, square, event.key as BoardArrowKey));
+  }
 </script>
 
 <div
   class:compact
   class="board"
-  role={compact ? "img" : "group"}
-  aria-label={compact ? "Saved chess position" : "Chess board"}
+  role={compact ? "img" : "grid"}
+  aria-label={compact ? "Saved chess position" : boardLabel}
+  aria-rowcount={compact ? undefined : 8}
+  aria-colcount={compact ? undefined : 8}
   title={compact ? undefined : "Right-drag to draw · Shift green · Ctrl red · Alt blue · left-click to clear"}
   bind:this={boardElement}
   onpointerdown={handlePointerDown}
@@ -375,6 +411,7 @@
 >
   <div class="squares">
     {#each ranks as rank, rankIndex}
+      <div class="board-row" role={compact ? undefined : "row"}>
       {#each files as file, fileIndex}
         {@const square = `${file}${rank}`}
         {@const piece = position.get(square as Square)}
@@ -388,8 +425,18 @@
           class:occupied={Boolean(piece)}
           class="square"
           type="button"
-          tabindex={compact ? -1 : undefined}
-          aria-label={`${square}${piece ? `, ${piece.color === "w" ? "white" : "black"} ${piece.type}` : ""}`}
+          data-board-square={square}
+          role={compact ? undefined : "gridcell"}
+          tabindex={compact
+            ? -1
+            : keyboardSquare === square ||
+                (!keyboardSquare && rankIndex === 0 && fileIndex === 0)
+              ? 0
+              : -1}
+          aria-selected={compact ? undefined : selected === square}
+          aria-label={`${square}, ${piece ? `${piece.color === "w" ? "white" : "black"} ${pieceNames[piece.type]}` : "empty"}${selected === square ? ", selected" : ""}${legalTargets.includes(square) ? ", legal destination" : ""}`}
+          onfocus={() => (keyboardSquare = square)}
+          onkeydown={(event) => handleSquareKeydown(event, square)}
           onclick={() => onSquareClick(square)}
         >
           {#if fileIndex === 0}
@@ -403,6 +450,7 @@
           {/if}
         </button>
       {/each}
+      </div>
     {/each}
   </div>
 
@@ -504,6 +552,10 @@
     inset: 0;
     display: grid;
     grid-template-columns: repeat(8, 1fr);
+  }
+
+  .board-row {
+    display: contents;
   }
 
   .pieces {

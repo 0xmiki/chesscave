@@ -417,8 +417,6 @@
 
   <AppHeader
     active="study"
-    title="Conversion Trainer"
-    subtitle="Practice winning positions from your games"
     actions={headerActions}
   />
 
@@ -430,14 +428,12 @@
       </section>
     {:else if loadError}
       <section class="state-card">
-        <span class="eyebrow">TRAINING UNAVAILABLE</span>
         <h2>There is no position to load yet.</h2>
         <p>{loadError}</p>
         <a class="primary-link" href="/study">Open Study</a>
       </section>
     {:else if !playerSide}
       <section class="state-card">
-        <span class="eyebrow">CHOOSE YOUR SIDE</span>
         <h2>Which player were you?</h2>
         <p>This imported PGN is not tied to your saved Chess.com username.</p>
         <div class="side-options">
@@ -451,7 +447,6 @@
       </section>
     {:else if !exercises.length}
       <section class="state-card">
-        <span class="eyebrow">NO FAILED CONVERSION</span>
         <h2>No training position was found.</h2>
         <p>
           ChessCave looks for a loss or draw where Stockfish gave you an expected
@@ -467,7 +462,6 @@
     {:else if exercise}
       <div class="trainer-grid">
         <aside class="brief-panel">
-          <span class="eyebrow">{exercise.kind === "replay" ? "WEEKLY HIGHLIGHT" : "FAILED WIN · YOUR GAME"}</span>
           <h2>{exerciseTitle(exercise)}</h2>
           <p class="brief-copy">
             {exercise.kind === "replay"
@@ -614,7 +608,6 @@
 
         <aside class="review-panel">
           <header>
-            <span class="eyebrow">ATTEMPT</span>
             <h2>{status === "complete" ? "What happened" : "Move record"}</h2>
           </header>
 
@@ -699,7 +692,7 @@
   }
 
   main {
-    height: calc(100% - 69px);
+    height: calc(100% - 59px);
     overflow: auto;
   }
 
@@ -734,16 +727,15 @@
     padding: 24px;
     border: 1px solid var(--line);
     border-radius: 14px;
-    background: rgba(255, 253, 248, 0.86);
+    background: color-mix(in srgb, var(--pearl-raised) 86%, transparent);
     box-shadow: 0 12px 32px rgba(66, 52, 42, 0.06);
   }
 
-  .eyebrow,
   .feedback-block > span,
   .checklist > span,
   .result-card > span {
     color: var(--coral-dark);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 780;
     letter-spacing: 0.13em;
   }
@@ -805,7 +797,7 @@
   }
 
   .exercise-tabs button.active {
-    border-color: #d7a28f;
+    border-color: var(--coral-line);
     background: var(--coral-soft);
   }
 
@@ -834,7 +826,7 @@
 
   dt {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
     text-transform: uppercase;
   }
 
@@ -928,7 +920,7 @@
     padding-top: 14px;
     border-top: 1px solid var(--line);
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .progress-note strong {
@@ -940,9 +932,9 @@
     gap: 6px;
     margin-bottom: 12px;
     padding: 14px;
-    border: 1px solid #ddc9ba;
+    border: 1px solid var(--coral-line);
     border-radius: 10px;
-    background: #f8eee6;
+    background: var(--coral-soft);
   }
 
   .result-card.win {
@@ -999,7 +991,7 @@
   }
 
   .board-shade span {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 750;
     letter-spacing: 0.15em;
   }
@@ -1021,7 +1013,7 @@
     border-radius: 999px;
     color: white;
     background: rgba(41, 36, 31, 0.86);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .board-error {
@@ -1059,7 +1051,7 @@
     border: 1px dashed var(--line-strong);
     border-radius: 9px;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .hidden-engine span {
@@ -1138,7 +1130,7 @@
 
   .attempt-metrics span {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
     text-transform: uppercase;
   }
 

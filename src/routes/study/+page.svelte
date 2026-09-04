@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { Chess, type Square } from "chess.js";
   import AppHeader from "$lib/components/AppHeader.svelte";
   import ChessBoard from "$lib/components/ChessBoard.svelte";
@@ -130,6 +130,9 @@
   let pgnDraft = $state("");
   let importError = $state("");
   let studyTab = $state<"review" | "coach" | "patch">("review");
+  let importButton = $state<HTMLButtonElement>();
+  let importDialog = $state<HTMLDivElement>();
+  let importTextarea = $state<HTMLTextAreaElement>();
   let storageReady = $state(false);
   let openingBook = $state<OpeningBook | null>(null);
   let openingError = $state("");
@@ -288,7 +291,6 @@
       ])[0] ?? moveReview!.bestMove
     );
   });
-  const eventTitle = $derived(game.headers.Event || "Untitled game");
   const matchupTitle = $derived(
     `${game.headers.White || "White"} vs ${game.headers.Black || "Black"}`,
   );
@@ -314,13 +316,6 @@
     snapshot.fen.split(/\s+/)[1] === "b" ? "b" : "w",
   );
   const conversionSide = $derived(sideForUsername(game, playerUsername));
-  const coachIdentityLabel = $derived(
-    conversionSide === "w"
-      ? "You are White"
-      : conversionSide === "b"
-        ? "You are Black"
-        : "Player side unknown",
-  );
   const conversionExercises = $derived(
     review && conversionSide
       ? findConversionExercises(game, review, conversionSide)
@@ -826,6 +821,59 @@
     }
   }
 
+  function handleStudyTabKeydown(event: KeyboardEvent) {
+    const tabs = ["review", "coach", "patch"] as const;
+    const current = tabs.indexOf(studyTab);
+    let next = current;
+    if (event.key === "ArrowRight") next = (current + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") next = (current - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    studyTab = tabs[next];
+    void tick().then(() => {
+      document.getElementById(`study-tab-${studyTab}`)?.focus();
+    });
+  }
+
+  async function openImportDialog() {
+    pgnDraft = "";
+    importError = "";
+    importOpen = true;
+    await tick();
+    importTextarea?.focus();
+  }
+
+  function closeImportDialog() {
+    importOpen = false;
+    void tick().then(() => importButton?.focus());
+  }
+
+  function handleImportDialogKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeImportDialog();
+      return;
+    }
+    if (event.key !== "Tab" || !importDialog) return;
+    const controls = Array.from(
+      importDialog.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), textarea:not(:disabled)",
+      ),
+    );
+    if (!controls.length) return;
+    const first = controls[0];
+    const last = controls.at(-1)!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   async function requestGameReview(force = false) {
     if (!engine.available) return;
     if (reviewBusy) {
@@ -877,7 +925,7 @@
       selected = null;
       review = null;
       studyTab = "review";
-      importOpen = false;
+      closeImportDialog();
       pgnDraft = "";
       if (engine.available) void requestGameReview();
     } catch (error) {
@@ -1621,14 +1669,12 @@
       {#if conversionExercises.length}
         <a class="practice-action" href="/practice/conversion">Practice this lead</a>
       {/if}
-      <button type="button" onclick={() => { pgnDraft = ""; importOpen = true; }}>Import game</button>
+      <button bind:this={importButton} type="button" onclick={openImportDialog}>Import game</button>
     </div>
   {/snippet}
 
   <AppHeader
     active="study"
-    title={matchupTitle}
-    subtitle={`${eventTitle}${currentOpening?.name || game.headers.Opening ? ` · ${currentOpening?.name || game.headers.Opening}` : ""}`}
     actions={headerActions}
   />
 
@@ -1758,7 +1804,6 @@
       <section class="study-panel" aria-label="Game study">
         <header class="panel-header">
           <div>
-            <span class="panel-kicker">Study</span>
             <strong>
               {exploring
                 ? "Exploratory line"
@@ -1767,35 +1812,43 @@
                   : "Position context"}
             </strong>
           </div>
-          <div class="panel-tabs" role="tablist" aria-label="Study mode">
+          <div class="panel-tabs" role="tablist" aria-label="Study mode" tabindex="-1" onkeydown={handleStudyTabKeydown}>
             <button
+              id="study-tab-review"
               class:active={studyTab === "review"}
               type="button"
               role="tab"
               aria-selected={studyTab === "review"}
+              aria-controls="study-panel-review"
+              tabindex={studyTab === "review" ? 0 : -1}
               onclick={() => (studyTab = "review")}
             >Review</button>
             <button
+              id="study-tab-coach"
               class:active={studyTab === "coach"}
               type="button"
               role="tab"
               aria-selected={studyTab === "coach"}
+              aria-controls="study-panel-coach"
+              tabindex={studyTab === "coach" ? 0 : -1}
               onclick={() => (studyTab = "coach")}
             >Coach</button>
             <button
+              id="study-tab-patch"
               class:active={studyTab === "patch"}
               type="button"
               role="tab"
               aria-selected={studyTab === "patch"}
+              aria-controls="study-panel-patch"
+              tabindex={studyTab === "patch" ? 0 : -1}
               onclick={() => (studyTab = "patch")}
             >Patch</button>
           </div>
         </header>
 
         {#if studyTab === "review"}
-          <div class="review-panel" role="tabpanel">
+          <div id="study-panel-review" class="review-panel" role="tabpanel" aria-labelledby="study-tab-review">
             <div class="review-lead">
-              <span>{exploring ? "Exploratory position" : "Position review"}</span>
               <div>
                 <h2>{currentLabel}</h2>
                 {#if currentMoveClassification}
@@ -1899,7 +1952,6 @@
             status={coachStatus}
             detail={coachDetail}
             activity={coachActivity}
-            contextLabel={`${currentLabel} · ${coachIdentityLabel}${review ? " · Reviewed" : ""}`}
             busy={coachStatus === "thinking" || patchGenerating || coachDrillRequest}
             onSend={askCoach}
             onNewConversation={startNewCoachConversation}
@@ -1940,19 +1992,26 @@
     class="modal-backdrop"
     role="presentation"
     onclick={(event) => {
-      if (event.target === event.currentTarget) importOpen = false;
+      if (event.target === event.currentTarget) closeImportDialog();
     }}
   >
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
+    <div
+      class="modal"
+      bind:this={importDialog}
+      role="dialog"
+      tabindex="-1"
+      aria-modal="true"
+      aria-labelledby="import-title"
+      onkeydown={handleImportDialogKeydown}
+    >
       <div class="modal-head">
         <div>
-          <span class="meta-label">NEW STUDY</span>
           <h2 id="import-title">Import a PGN</h2>
         </div>
-        <button type="button" onclick={() => (importOpen = false)}>×</button>
+        <button type="button" aria-label="Close import dialog" onclick={closeImportDialog}>×</button>
       </div>
       <p>Paste a complete PGN. ChessCave will load every move for Stockfish and Sol.</p>
-      <textarea bind:value={pgnDraft} rows="13" placeholder={'[Event "My game"]\n\n1. e4 e5 2. Nf3 …'}></textarea>
+      <textarea bind:this={importTextarea} bind:value={pgnDraft} rows="13" placeholder={'[Event "My game"]\n\n1. e4 e5 2. Nf3 …'}></textarea>
       {#if importError}<div class="import-error">{importError}</div>{/if}
       <div class="modal-actions">
         <button class="secondary" type="button" onclick={() => { pgnDraft = SAMPLE_PGN; }}>Use sample</button>
@@ -1968,7 +2027,7 @@
     position: fixed;
     inset: 0;
     display: grid;
-    grid-template-rows: 68px minmax(0, 1fr);
+    grid-template-rows: 58px minmax(0, 1fr);
     width: 100%;
     height: 100%;
     overflow: hidden;
@@ -1978,18 +2037,18 @@
 
   .top-actions {
     display: flex;
-    gap: 16px;
+    gap: 8px;
     align-items: center;
   }
 
   .top-actions > button {
-    min-height: 36px;
-    padding: 0 15px;
+    min-height: 29px;
+    padding: 0 11px;
     border: 1px solid var(--ink);
     border-radius: 999px;
     color: var(--pearl-raised);
     background: var(--ink);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 650;
     cursor: pointer;
   }
@@ -2000,8 +2059,9 @@
   }
 
   .practice-action {
-    padding: 8px 12px;
-    border: 1px solid #d7a28f;
+    min-height: 29px;
+    padding: 0 11px;
+    border: 1px solid var(--coral-line);
     border-radius: 999px;
     color: var(--coral-dark);
     background: var(--coral-soft);
@@ -2093,8 +2153,16 @@
   }
 
   .evaluation-slot {
+    display: flex;
     grid-column: 1;
     grid-row: 2;
+    min-height: 0;
+  }
+
+  .evaluation-slot :global(.evaluation) {
+    width: 28px;
+    height: 100%;
+    min-height: 0;
   }
 
   .board-wrap {
@@ -2186,20 +2254,20 @@
     border-radius: 999px;
     color: var(--ink-soft);
     background: var(--sage-soft);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0;
     text-transform: capitalize;
   }
 
   .classification-pill.book {
-    color: #755c3e;
-    background: #eee3d4;
+    color: var(--ink-soft);
+    background: var(--pearl-raised);
   }
 
   .classification-pill.inaccuracy {
-    color: #79581f;
-    background: #f3e5bf;
+    color: var(--coral-dark);
+    background: var(--coral-soft);
   }
 
   .classification-pill.mistake,
@@ -2240,7 +2308,7 @@
   .navigation span {
     min-width: 54px;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
     text-align: center;
   }
@@ -2256,7 +2324,7 @@
 
   .timeline-label {
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2284,14 +2352,6 @@
     display: grid;
     min-width: 0;
     gap: 2px;
-  }
-
-  .panel-kicker {
-    color: var(--coral-dark);
-    font-size: 9px;
-    font-weight: 750;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
   }
 
   .panel-header strong {
@@ -2341,19 +2401,11 @@
     border-bottom: 1px solid var(--line);
   }
 
-  .review-lead > span {
-    color: var(--coral-dark);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
   .review-lead > div {
     display: flex;
     gap: 10px;
     align-items: baseline;
-    margin-top: 6px;
+    margin-top: 0;
   }
 
   .review-lead h2 {
@@ -2385,7 +2437,7 @@
   }
 
   .classification-text.inaccuracy {
-    color: var(--ochre);
+    color: var(--coral-dark);
   }
 
   .classification-text.mistake,
@@ -2416,7 +2468,7 @@
   .opening-band div span,
   .best-alternative div span {
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0;
     text-transform: none;
@@ -2434,7 +2486,7 @@
 
   .opening-band small {
     color: var(--faint);
-    font-size: 9px;
+    font-size: 11px;
     white-space: nowrap;
   }
 
@@ -2509,7 +2561,7 @@
     border-radius: 7px;
     color: var(--muted);
     background: var(--paper);
-    font-size: 10px;
+    font-size: 11px;
     text-align: center;
   }
 
@@ -2550,7 +2602,7 @@
     margin-left: auto;
     margin-right: 10px;
     color: var(--faint);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 500;
   }
 
@@ -2596,7 +2648,7 @@
   .line small {
     grid-column: 2;
     color: var(--faint);
-    font-size: 9px;
+    font-size: 11px;
     text-align: left;
   }
 
@@ -2625,7 +2677,7 @@
     display: block;
     margin-bottom: 3px;
     color: var(--coral-dark);
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 0.1em;
   }
 
@@ -2739,7 +2791,7 @@
 
   @media (max-width: 1100px) {
     .app-shell {
-      grid-template-rows: 68px minmax(0, 1fr);
+      grid-template-rows: 58px minmax(0, 1fr);
     }
 
     main {
@@ -2755,7 +2807,7 @@
     .study-column {
       --board-size: min(640px, calc(100vw - 90px), calc(100vh - 235px));
       order: 1;
-      min-height: calc(100vh - 68px);
+      min-height: calc(100vh - 58px);
       overflow: visible;
     }
 
@@ -2778,7 +2830,7 @@
 
   @media (max-width: 640px) {
     .app-shell {
-      grid-template-rows: 62px minmax(0, 1fr);
+      grid-template-rows: 54px minmax(0, 1fr);
     }
 
     .engine-chip {
@@ -2793,7 +2845,7 @@
 
     .study-column {
       --board-size: min(calc(100vw - 62px), calc(100vh - 245px));
-      min-height: calc(100vh - 62px);
+      min-height: calc(100vh - 54px);
       padding: 12px 6px 16px;
     }
 

@@ -203,8 +203,6 @@
 
   <AppHeader
     active="drill"
-    title="Your drills"
-    subtitle="Play a move before you see the answer"
     actions={headerActions}
   />
 
@@ -283,7 +281,6 @@
             </div>
           {:else if !attemptedMove}
             <div class="waiting-copy">
-              <span>YOUR TURN</span>
               <h1>Play a move.</h1>
               <p>The answer appears after you move.</p>
             </div>
@@ -351,14 +348,14 @@
     position: fixed;
     inset: 0;
     display: grid;
-    grid-template-rows: 68px minmax(0, 1fr);
+    grid-template-rows: 58px minmax(0, 1fr);
     color: var(--ink);
     background: var(--paper);
   }
 
   .due-count {
     color: var(--muted);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   main {
@@ -370,7 +367,7 @@
   .drill-shell {
     display: grid;
     grid-template-columns: minmax(380px, 650px) minmax(320px, 430px);
-    gap: clamp(46px, 7vw, 100px);
+    gap: clamp(24px, 3vw, 52px);
     align-items: center;
     justify-content: center;
     min-height: 100%;
@@ -391,7 +388,7 @@
   .card-context > span,
   .card-context small {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .card-context small {
@@ -407,7 +404,7 @@
   .lesson {
     display: grid;
     align-content: center;
-    min-height: min(580px, calc(100vh - 150px));
+    min-height: min(580px, calc(100vh - 190px));
     padding-block: 32px;
     border-block: 1px solid var(--line-strong);
   }
@@ -420,7 +417,7 @@
   .principle > span,
   .state-card > span {
     color: var(--coral-dark);
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 780;
     letter-spacing: 0.13em;
   }
@@ -446,12 +443,13 @@
 
   .source-link {
     width: fit-content;
-    border: 0;
-    border-bottom: 1px solid var(--line-strong);
-    padding: 5px 0;
+    min-height: 32px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 0 12px;
     color: var(--ink-soft);
     background: transparent;
-    font-size: 10px;
+    font-size: 11px;
     cursor: pointer;
   }
 
@@ -465,16 +463,19 @@
 
   .delete-trigger,
   .delete-confirmation button {
-    border: 0;
-    padding: 5px 0;
+    min-height: 32px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0 12px;
     color: var(--muted);
     background: transparent;
-    font-size: 10px;
+    font-size: 11px;
     cursor: pointer;
   }
 
   .delete-trigger:hover,
   .delete-confirmation .confirm-delete {
+    border-color: var(--danger-line);
     color: var(--danger);
   }
 
@@ -486,7 +487,7 @@
 
   .delete-confirmation > span {
     color: var(--ink-soft);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .delete-confirmation button:disabled {
@@ -556,7 +557,7 @@
 
   .review-actions button small {
     color: var(--muted);
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 550;
   }
 
@@ -582,7 +583,7 @@
   .save-error {
     margin: 12px 0 0;
     color: var(--danger);
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .state-card {
@@ -642,7 +643,7 @@
 
   .saved-drill small {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .spinner {
@@ -677,7 +678,7 @@
   }
 
   @media (max-width: 680px) {
-    .app-shell { grid-template-rows: 62px minmax(0, 1fr); }
+    .app-shell { grid-template-rows: 54px minmax(0, 1fr); }
     .drill-shell { padding: 20px 12px 34px; }
     .card-context { grid-template-columns: 1fr; }
     .card-context small { grid-row: auto; grid-column: 1; }

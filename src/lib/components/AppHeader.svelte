@@ -1,15 +1,12 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
 
   let {
     active,
-    title,
-    subtitle = "",
     actions,
   }: {
     active: "home" | "play" | "study" | "drill" | "notes";
-    title: string;
-    subtitle?: string;
     actions?: Snippet;
   } = $props();
 </script>
@@ -19,27 +16,20 @@
     <span class="brand-mark" aria-hidden="true">
       <img src="/chesscave-logo.svg" alt="" />
     </span>
-    <span>ChessCave</span>
   </a>
 
   <nav aria-label="Primary navigation">
-    <a class:active={active === "home"} href="/">Home</a>
-    <a class:active={active === "play"} href="/play/codex">Play</a>
-    <a class:active={active === "study"} href="/study">Study</a>
-    <a class:active={active === "drill"} href="/drill">Drill</a>
-    <a class:active={active === "notes"} href="/notes">Notes</a>
+    <a class:active={active === "home"} aria-current={active === "home" ? "page" : undefined} href="/">Home</a>
+    <a class:active={active === "play"} aria-current={active === "play" ? "page" : undefined} href="/play/codex">Play</a>
+    <a class:active={active === "study"} aria-current={active === "study" ? "page" : undefined} href="/study">Study</a>
+    <a class:active={active === "drill"} aria-current={active === "drill" ? "page" : undefined} href="/drill">Drill</a>
+    <a class:active={active === "notes"} aria-current={active === "notes" ? "page" : undefined} href="/notes">Notes</a>
   </nav>
 
-  <div class="context">
-    <h1>{title}</h1>
-    {#if subtitle}<p>{subtitle}</p>{/if}
+  <div class="actions">
+    {#if actions}{@render actions()}{/if}
+    <ThemeToggle />
   </div>
-
-  {#if actions}
-    <div class="actions">
-      {@render actions()}
-    </div>
-  {/if}
 </header>
 
 <style>
@@ -47,34 +37,30 @@
     position: relative;
     z-index: 20;
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     gap: 24px;
     align-items: center;
     width: 100%;
     height: 100%;
     min-width: 0;
-    min-height: 68px;
+    min-height: 58px;
     padding: 0 28px;
     border-bottom: 1px solid var(--line);
-    background: rgba(251, 248, 242, 0.97);
+    background: var(--header-bg);
   }
 
   .brand {
     display: inline-flex;
-    gap: 10px;
     align-items: center;
-    color: var(--ink);
-    font-family: var(--display);
-    font-size: 19px;
-    font-variation-settings: "opsz" 24, "wght" 650;
+    justify-self: start;
     text-decoration: none;
   }
 
   .brand-mark {
     display: block;
     flex: 0 0 auto;
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
   }
 
   .brand-mark img {
@@ -91,6 +77,7 @@
     border: 1px solid var(--line);
     border-radius: 999px;
     background: var(--paper);
+    justify-self: center;
   }
 
   nav a {
@@ -113,35 +100,20 @@
     background: var(--ink);
   }
 
-  .context {
-    min-width: 0;
-    padding-left: 22px;
-    border-left: 1px solid var(--line);
-  }
-
-  .context h1 {
-    margin: 0;
-    overflow: hidden;
-    color: var(--ink);
-    font-family: var(--display);
-    font-size: 16px;
-    font-variation-settings: "opsz" 18, "wght" 610;
-    line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .context p {
-    margin: 3px 0 0;
-    overflow: hidden;
-    color: var(--muted);
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
     min-width: 0;
+    justify-self: end;
+  }
+
+  .actions :global(button),
+  .actions :global(a) {
+    min-height: 29px;
+    max-height: 29px;
+    border-radius: 999px;
+    font-size: 11px;
   }
 
   @media (max-width: 1180px) {
@@ -150,27 +122,19 @@
       padding-inline: 20px;
     }
 
-    .context {
-      padding-left: 16px;
-    }
   }
 
   @media (max-width: 760px) {
     .topbar {
-      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
       gap: 10px;
-      min-height: 62px;
+      min-height: 54px;
       padding-inline: 12px;
     }
 
-    .brand > span:last-child,
-    .context p {
-      display: none;
-    }
-
     .brand-mark {
-      width: 32px;
-      height: 32px;
+      width: 26px;
+      height: 26px;
     }
 
     nav a {
@@ -178,27 +142,12 @@
       padding-inline: 8px;
     }
 
-    .context {
-      padding-left: 0;
-      border-left: 0;
-    }
-
-    .context h1 {
-      font-size: 14px;
-    }
   }
 
   @media (max-width: 520px) {
-    .context {
-      display: none;
-    }
-
     .topbar {
-      grid-template-columns: auto auto minmax(0, 1fr);
-    }
-
-    .actions {
-      justify-self: end;
+      gap: 6px;
+      padding-inline: 8px;
     }
   }
 </style>

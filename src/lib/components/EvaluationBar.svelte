@@ -37,8 +37,8 @@
     min-height: 280px;
     overflow: hidden;
     border-radius: 5px;
-    background: #20211f;
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+    background: #403a34;
+    box-shadow: 0 0 0 1px rgba(41, 36, 31, 0.12);
   }
 
   .evaluation.flipped {
@@ -49,7 +49,7 @@
     position: absolute;
     bottom: 0;
     width: 100%;
-    background: #efeee9;
+    background: #fffdf8;
     transition: height var(--motion-standard) ease-out;
   }
 
@@ -58,37 +58,16 @@
     top: 7px;
     left: 50%;
     transform: translateX(-50%);
-    color: #f7f6f1;
-    font-size: 10px;
-    font-weight: 800;
+    color: #fffdf8;
+    font-size: 11px;
+    font-weight: 700;
     writing-mode: vertical-rl;
   }
 
   .score.in-white {
     top: auto;
     bottom: 7px;
-    color: #20211f;
+    color: #29241f;
   }
 
-  .evaluation {
-    width: 28px;
-    min-height: 240px;
-    border-radius: 5px;
-    background: #403a34;
-    box-shadow: 0 0 0 1px rgba(41, 36, 31, 0.12);
-  }
-
-  .white {
-    background: var(--pearl-raised);
-  }
-
-  .score {
-    color: var(--pearl-raised);
-    font-size: 9px;
-    font-weight: 700;
-  }
-
-  .score.in-white {
-    color: var(--ink);
-  }
 </style>

@@ -4,7 +4,20 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/chesscave-logo.svg" type="image/svg+xml" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f1ede5" />
+    <meta name="theme-color" content="#111210" />
+    <script>
+      try {
+        const saved = localStorage.getItem("chesscave.theme.v1");
+        const theme = saved === "light" || saved === "dark" ? saved : "dark";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+        document
+          .querySelector('meta[name="theme-color"]')
+          ?.setAttribute("content", theme === "dark" ? "#111210" : "#f1ede5");
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
     <title>ChessCave</title>
     %sveltekit.head%
   </head>

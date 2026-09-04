@@ -13,7 +13,6 @@
     status,
     detail,
     activity,
-    contextLabel,
     busy,
     onSend,
     onNewConversation,
@@ -27,7 +26,6 @@
     status: "offline" | "starting" | "ready" | "thinking" | "error";
     detail: string;
     activity: CoachActivity | null;
-    contextLabel: string;
     busy: boolean;
     onSend: (message: string) => void;
     onNewConversation: () => void;
@@ -186,43 +184,7 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<section class="coach" aria-label="Coach">
-  <header>
-    <div class="coach-mark">S</div>
-    <div class="coach-title">
-      <h2>Sol</h2>
-      <p>{contextLabel}</p>
-    </div>
-    <div class="header-actions">
-      {#if busy}
-        <button
-          class="stop-response"
-          type="button"
-          onclick={stopResponse}
-          disabled={!canStop}
-          aria-label="Stop response"
-          title={canStop ? "Stop response · Escape" : "Waiting for response to start"}
-        >
-          <span></span>
-        </button>
-      {/if}
-      <button
-        class="new-conversation"
-        type="button"
-        onclick={startNewConversation}
-        disabled={busy || status === "starting" || status === "offline"}
-        aria-label="Start a new conversation"
-        title="Start a new conversation"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M7 18.4 3.7 21v-4.5A8 8 0 1 1 7 18.4Z"></path>
-          <path d="M12 8v6M9 11h6"></path>
-        </svg>
-      </button>
-      <span class:ready={status === "ready"} class:thinking={status === "thinking"} class="status-dot"></span>
-    </div>
-  </header>
-
+<div id="study-panel-coach" class="coach" role="tabpanel" aria-labelledby="study-tab-coach">
   <div class="messages-shell">
     <div
       class="messages"
@@ -251,31 +213,24 @@
       {#each messages as message (message.id)}
         {#if message.role === "assistant"}
           <article class="message assistant">
-            <div class="message-byline">
-              <span class="response-mark" aria-hidden="true">S</span>
-              <div>
-                <strong>Sol</strong>
-                <small>{message.pending ? "Writing" : "Chess coach"}</small>
-              </div>
-              {#if message.text && !message.pending}
-                <button
-                  class="copy-response"
-                  type="button"
-                  onclick={() => copyResponse(message.id, message.text)}
-                  aria-label={copiedMessage === message.id ? "Response copied" : "Copy response"}
-                  title={copiedMessage === message.id ? "Copied" : "Copy response"}
-                >
-                  {#if copiedMessage === message.id}
-                    <span>Copied</span>
-                  {:else}
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <rect x="8" y="8" width="11" height="11" rx="2"></rect>
-                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>
-                    </svg>
-                  {/if}
-                </button>
-              {/if}
-            </div>
+            {#if message.text && !message.pending}
+              <button
+                class="copy-response"
+                type="button"
+                onclick={() => copyResponse(message.id, message.text)}
+                aria-label={copiedMessage === message.id ? "Response copied" : "Copy response"}
+                title={copiedMessage === message.id ? "Copied" : "Copy response"}
+              >
+                {#if copiedMessage === message.id}
+                  <span>Copied</span>
+                {:else}
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="8" y="8" width="11" height="11" rx="2"></rect>
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>
+                  </svg>
+                {/if}
+              </button>
+            {/if}
             {#if message.text}
               <div class="response-copy">
                 {@html renderCoachMarkdown(message.text)}
@@ -391,14 +346,41 @@
       {:else}
         <span class="keyboard-hint"><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> new line</span>
       {/if}
+      <div class="composer-actions">
+        {#if busy}
+          <button
+            class="stop-response"
+            type="button"
+            onclick={stopResponse}
+            disabled={!canStop}
+            aria-label="Stop response"
+            title={canStop ? "Stop response · Escape" : "Waiting for response to start"}
+          >
+            <span></span>
+          </button>
+        {/if}
+        <button
+          class="new-conversation"
+          type="button"
+          onclick={startNewConversation}
+          disabled={busy || status === "starting" || status === "offline"}
+          aria-label="Start a new conversation"
+          title="Start a new conversation"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 18.4 3.7 21v-4.5A8 8 0 1 1 7 18.4Z"></path>
+            <path d="M12 8v6M9 11h6"></path>
+          </svg>
+        </button>
+      </div>
     </div>
   </form>
-</section>
+</div>
 
 <style>
 .coach {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   height: auto;
@@ -406,76 +388,9 @@
   background: transparent;
 }
 
-header {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 18px 20px 16px;
-  border-bottom: 1px solid var(--line);
-}
-
-.coach-mark {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border: 1px solid #e5b9a9;
-  border-radius: 50%;
-  color: var(--coral-dark);
-  background: var(--coral-soft);
-  font-family: var(--display);
-  font-size: 16px;
-  font-weight: 650;
-}
-
-.coach-title {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
-h2,
 h3,
 p {
   margin: 0;
-}
-
-.coach-title h2 {
-  color: var(--ink);
-  font-family: var(--display);
-  font-size: 18px;
-  font-variation-settings: "opsz" 20, "wght" 600;
-}
-
-.coach-title p {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--faint);
-}
-
-.status-dot.ready {
-  background: var(--sage);
-}
-
-.status-dot.thinking {
-  background: var(--coral);
-  animation: pulse 1.2s ease-in-out infinite;
 }
 
 .new-conversation {
@@ -497,7 +412,7 @@ p {
   height: 30px;
   place-items: center;
   padding: 0;
-  border: 1px solid #df9e8b;
+  border: 1px solid var(--danger-line);
   border-radius: 50%;
   color: var(--coral-dark);
   background: var(--coral-soft);
@@ -624,7 +539,7 @@ p {
 .user-label {
   padding-right: 3px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -635,7 +550,7 @@ p {
   max-width: 88%;
   padding: 10px 14px;
   overflow-wrap: anywhere;
-  border: 1px solid #ead6cd;
+  border: 1px solid var(--coral-line);
   border-radius: 12px 12px 2px;
   color: var(--ink);
   background: var(--coral-soft);
@@ -645,7 +560,7 @@ p {
 }
 
 .user.failed .bubble {
-  border-color: #df9e8b;
+  border-color: var(--danger-line);
 }
 
 .user.stopped .bubble {
@@ -656,7 +571,7 @@ p {
 .request-failure {
   max-width: 88%;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .request-failure.stopped {
@@ -694,26 +609,26 @@ p {
 }
 
 .request-failure strong {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .request-failure small {
   max-width: 34ch;
   overflow: hidden;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .request-failure button {
   padding: 4px 8px;
-  border: 1px solid #df9e8b;
+  border: 1px solid var(--danger-line);
   border-radius: 999px;
   color: var(--coral-dark);
   background: var(--pearl-raised);
   font: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -724,50 +639,16 @@ p {
 }
 
 .assistant {
+  position: relative;
+  padding-right: 34px;
   padding-bottom: 23px;
   border-bottom: 1px solid var(--line);
 }
 
-.message-byline {
-  display: grid;
-  grid-template-columns: 27px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.response-mark {
-  display: grid;
-  width: 27px;
-  height: 27px;
-  place-items: center;
-  border: 1px solid #e5b9a9;
-  border-radius: 50%;
-  color: var(--coral-dark);
-  background: var(--coral-soft);
-  font-family: var(--display);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.message-byline > div {
-  display: grid;
-  gap: 0;
-}
-
-.message-byline strong {
-  color: var(--ink);
-  font-family: var(--display);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.message-byline small {
-  color: var(--muted);
-  font-size: 9px;
-}
-
 .copy-response {
+  position: absolute;
+  top: -5px;
+  right: 0;
   display: grid;
   min-width: 28px;
   height: 28px;
@@ -778,7 +659,7 @@ p {
   color: var(--muted);
   background: transparent;
   font: inherit;
-  font-size: 9px;
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -908,7 +789,7 @@ p {
   border: 1px solid var(--line);
   border-radius: 10px;
   color: var(--ink-soft);
-  background: rgba(255, 255, 255, 0.38);
+  background: color-mix(in srgb, var(--pearl-raised) 38%, transparent);
 }
 
 .activity-spinner {
@@ -943,7 +824,7 @@ p {
 .activity-copy small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -953,7 +834,7 @@ p {
   gap: 2px;
   margin: 12px 0;
   padding: 10px 12px;
-  border: 1px solid #e7b8a9;
+  border: 1px solid var(--coral-line);
   border-radius: 9px;
   color: var(--danger);
   background: var(--coral-soft);
@@ -964,7 +845,7 @@ p {
 }
 
 .coach-error span {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -975,7 +856,7 @@ p {
   color: var(--coral-dark);
   background: transparent;
   font: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -997,7 +878,7 @@ p {
   background: var(--pearl-raised);
   box-shadow: 0 4px 14px rgba(78, 61, 47, 0.1);
   font: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 650;
   transform: translateX(-50%);
   cursor: pointer;
@@ -1018,7 +899,7 @@ form:focus-within {
 }
 
 form.error {
-  border-color: #df9e8b;
+  border-color: var(--danger-line);
 }
 
 .composer-row {
@@ -1098,6 +979,24 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+.composer-actions {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-left: 5px;
+}
+
+.composer-actions .new-conversation,
+.composer-actions .stop-response {
+  width: 24px;
+  height: 24px;
+}
+
+.composer-actions .new-conversation svg {
+  width: 14px;
+  height: 14px;
+}
+
 .live-dot {
   flex: 0 0 4px;
   width: 4px;
@@ -1149,7 +1048,6 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-dot.thinking,
   .typing,
   .activity-spinner {
     animation: none;
