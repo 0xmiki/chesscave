@@ -186,7 +186,7 @@
 
 <svelte:head>
   <title>Drill — ChessCave</title>
-  <meta name="description" content="Practice the positions you chose to patch." />
+  <meta name="description" content="Practice saved positions from your games." />
 </svelte:head>
 
 <svelte:window onkeydown={handleReviewShortcut} />
@@ -203,24 +203,24 @@
 
   <AppHeader
     active="drill"
-    title="Your patches"
-    subtitle="Recall the move before revealing the lesson"
+    title="Your drills"
+    subtitle="Play a move before you see the answer"
     actions={headerActions}
   />
 
   <main>
     {#if loading}
-      <section class="state-card"><span class="spinner"></span><p>Loading your patches…</p></section>
+      <section class="state-card"><span class="spinner"></span><p>Loading drills…</p></section>
     {:else if error && !card && !cards.length}
-      <section class="state-card error-state"><span>DRILL UNAVAILABLE</span><h1>Your patches could not be opened.</h1><p>{error}</p></section>
+      <section class="state-card error-state"><span>DRILL UNAVAILABLE</span><h1>Your drills could not be opened.</h1><p>{error}</p></section>
     {:else if !card}
       <section class="state-card empty-state">
-        <span>{cards.length ? "QUEUE COMPLETE" : "NO PATCHES YET"}</span>
-        <h1>{cards.length ? "You are caught up." : "Turn a mistake into something trainable."}</h1>
+        <span>{cards.length ? "QUEUE COMPLETE" : "NO DRILLS YET"}</span>
+        <h1>{cards.length ? "No drills are due." : "You have no drills yet."}</h1>
         <p>
           {cards.length
-            ? "The next patch will return when it is useful to recall again."
-            : "Open a game in Study, stop on the move that mattered, and choose Patch."}
+            ? "The next drill will appear on its scheduled date."
+            : "Open a game in Study, select one of your moves, and open the Patch tab."}
         </p>
         <a href="/study">Open Study</a>
         {#if cards.length}
@@ -278,14 +278,14 @@
           {#if wrongSideCard}
             <div class="waiting-copy side-warning">
               <span>SIDE MISMATCH</span>
-              <h1>This is your opponent’s turn.</h1>
-              <p>This older drill has the wrong perspective, so ChessCave will not ask you to practice it.</p>
+              <h1>This is your opponent's turn.</h1>
+              <p>This drill was saved for the wrong side and cannot be played.</p>
             </div>
           {:else if !attemptedMove}
             <div class="waiting-copy">
               <span>YOUR TURN</span>
-              <h1>Commit to a move.</h1>
-              <p>The explanation stays hidden until you make a decision on the board.</p>
+              <h1>Play a move.</h1>
+              <p>The answer appears after you move.</p>
             </div>
           {:else}
             <div class:correct={attemptedMove.correct} class="result" aria-live="polite">
@@ -293,8 +293,8 @@
               <h1>{attemptedMove.san}</h1>
               <p>
                 {attemptedMove.correct
-                  ? "That is the move this patch was built to recall."
-                  : `The patch move is ${card.quiz.acceptedMoves.map((move) => move.san).join(" or ")}. The arrow shows it on the board.`}
+                  ? "Correct."
+                  : `The answer is ${card.quiz.acceptedMoves.map((move) => move.san).join(" or ")}. The arrow shows it on the board.`}
               </p>
             </div>
 

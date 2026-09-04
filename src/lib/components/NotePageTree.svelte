@@ -226,7 +226,7 @@
       {#if menuPageId === node.page.id}
         <div class="page-menu" data-page-menu={node.page.id} role="menu">
           {#if confirmDeletePageId === node.page.id}
-            <p>Delete “{notePageTitle(node.page)}” and everything inside it?</p>
+            <p>Delete "{notePageTitle(node.page)}" and everything inside it?</p>
             <div class="confirm-actions">
               <button
                 type="button"

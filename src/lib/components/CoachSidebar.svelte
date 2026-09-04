@@ -36,8 +36,8 @@
   const maximumMessageLength = 2_000;
   const suggested = [
     "Why was the last move played?",
-    "What is the strongest plan here?",
-    "Show me the tactical danger.",
+    "What should I do next?",
+    "What threats should I check?",
   ];
 
   function submit() {
@@ -167,8 +167,8 @@
     >
     {#if messages.length === 0}
       <div class="welcome">
-        <h3>Ask about the game.</h3>
-        <p>Sol can use the current position and the saved full-game review to explain what mattered.</p>
+        <h3>Ask about this position.</h3>
+        <p>Sol reads the current position and Stockfish review before answering.</p>
       </div>
       <div class="suggestions">
         {#each suggested as suggestion}

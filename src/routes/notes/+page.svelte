@@ -207,7 +207,7 @@
   async function initialize() {
     if (!nativeHost) {
       loading = false;
-      error = "Notes persistence is available in the ChessCave desktop app.";
+      error = "Notes only work in the ChessCave desktop app.";
       return;
     }
 
@@ -1265,7 +1265,7 @@
   <title>Notes — ChessCave</title>
   <meta
     name="description"
-    content="Local, structured chess notes in ChessCave."
+    content="Write chess notes and save them on this device."
   />
 </svelte:head>
 
@@ -1447,7 +1447,7 @@
           {:else}
             <IconCheckCircleRegular />
           {/if}
-          {saveState.status === "saving" ? "Saving" : "Local"}
+          {saveState.status === "saving" ? "Saving" : "Saved"}
         </span>
       {/if}
       <button
@@ -1526,7 +1526,7 @@
       onscroll={updateCommandMenuPosition}
     >
       {#if loading}
-        <div class="page-state">Preparing Notes…</div>
+        <div class="page-state">Loading notes…</div>
       {:else if error && !selectedPage}
         <div class="page-state error">
           <strong>Notes could not open.</strong>

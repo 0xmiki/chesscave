@@ -341,7 +341,7 @@
         moves = saved.moves;
         playerSide = saved.playerSide ?? "w";
         flipped = playerSide === "b";
-        note = saved.note ?? "Game restored. Take a moment with the position.";
+        note = saved.note ?? "Game restored.";
         noteLabel = "Welcome back";
         coachingAids = saved.coachingAids ?? true;
         gameStarted = saved.moves.length > 0;
@@ -715,7 +715,7 @@
     const text = feedback
       ? `Sol is comparing ${feedback.move.san} with Stockfish's preferred plan. Keep playing.`
       : explanation.analysis
-        ? "Sol is turning Stockfish's choice into a human idea. Keep playing."
+        ? "Sol is explaining Stockfish's move. Keep playing."
         : `Sol is explaining why ${explanation.move.san} belongs in ${explanation.opening?.name ?? "this opening"}. Keep playing.`;
     coachNotes = {
       ...coachNotes,
@@ -917,8 +917,8 @@
       : "Draw";
     noteLabel = "Game complete";
     note = position.isCheckmate()
-      ? "The king has no legal escape. The full game is ready to revisit."
-      : "The position has reached a drawn result.";
+      ? "Checkmate."
+      : "Draw.";
   }
 
   function newGame(side: Side = playerSide) {
@@ -951,7 +951,7 @@
     activeExplanation = null;
     coachBusy = false;
     if (turnToInterrupt) void interruptCoachTurn(turnToInterrupt).catch(() => {});
-    note = "Choose how much engine guidance you want, then begin.";
+    note = "Choose a side and whether to show engine help.";
     noteLabel = "Session setup";
     phase = hasNativeHost() ? "ready" : "offline";
     statusText = hasNativeHost() ? "Set up your session" : "Desktop app required for Stockfish";
@@ -1002,7 +1002,7 @@
     phase = "complete";
     statusText = "You resigned";
     noteLabel = "Game complete";
-    note = "The position is saved. Start again whenever you are ready.";
+    note = "You resigned. The game was saved.";
   }
 
   function moveNumber(move: CodexPlayMove) {
@@ -1018,7 +1018,7 @@
 
 <svelte:head>
   <title>Play with Codex — ChessCave</title>
-  <meta name="description" content="Play a thoughtful game against Codex and Stockfish." />
+  <meta name="description" content="Play a game against Stockfish with Codex explanations." />
 </svelte:head>
 
 <div class="play-shell">
@@ -1037,7 +1037,7 @@
       ? "Session setup"
       : historyPly !== null
         ? historyOpening?.name ?? "Move history"
-        : currentOpening?.name ?? "A game in progress"}
+        : currentOpening?.name ?? "Game in progress"}
     actions={headerActions}
   />
 
@@ -1046,7 +1046,7 @@
       <div class="board-column">
         <div class="player-row top">
           <span class="avatar codex">C</span>
-          <span><strong>Codex</strong><small>Varied repertoire · {engineName} 0.7s · Luna · {!hasNativeHost() ? "desktop app only" : codexReady ? coachBusy ? "forming a thought" : "ready to coach" : coachUnavailable ? "commentary unavailable" : "connecting"}</small></span>
+          <span><strong>Codex</strong><small>{engineName} 0.7s · {!hasNativeHost() ? "desktop app only" : codexReady ? coachBusy ? "writing" : "coach ready" : coachUnavailable ? "coach unavailable" : "connecting"}</small></span>
           {#if displayPosition.inCheck() && displayPosition.turn() !== playerSide}<em>Check</em>{/if}
         </div>
         <div class:with-evaluation={coachingAids} class="board-stage">
@@ -1170,7 +1170,7 @@
           <div class="note-copy">
             <span class="eyebrow">{historyPly !== null ? historyCoachNote?.label ?? historyOpening?.name ?? "Move history" : latestCoachNote?.label ?? noteLabel}</span>
             {#if !gameStarted}
-            <h1>A serious game, with room to think aloud.</h1>
+            <h1>Choose a side and start the game.</h1>
           {:else if historyPly !== null}
             <h1>{historyMove ? `${moveNumber(historyMove)}${historyMove.side === "w" ? "." : "…"} ${historyMove.san}` : "Starting position"}</h1>
             {#if historyCoachNote}
@@ -1216,15 +1216,15 @@
         {#if !reflectionFen && historyPly === null && insight && phase !== "complete"}
           <button class="insight-invitation" type="button" onclick={openInsight}>
             <span>Earlier · {insight.move.san}</span>
-            <strong>Stockfish found another useful idea</strong>
-            <em>Look when ready</em>
+            <strong>Compare your move with Stockfish</strong>
+            <em>Open</em>
           </button>
         {/if}
 
         {#if gameStarted && historyPly === null && !reflectionFen}
           <div class="line-glimpse">
             <span>Engine line</span>
-            <p>{principalLine.length ? principalLine.slice(0, 5).join("  ") : currentOpening ? "Opening book — no engine wait" : "Appears after calculation"}</p>
+            <p>{principalLine.length ? principalLine.slice(0, 5).join("  ") : currentOpening ? "Opening book move" : "Waiting for Stockfish"}</p>
           </div>
         {/if}
       </aside>
@@ -1233,7 +1233,7 @@
     <section class="move-ribbon" aria-label="Moves played">
       <span class="opening-code">{currentOpening?.eco ?? "—"}</span>
       <div class="moves">
-        {#if !moves.length}<span class="empty-moves">The moves will gather here.</span>{/if}
+        {#if !moves.length}<span class="empty-moves">No moves yet.</span>{/if}
         {#each moves as move}
           <button type="button" class:active={historyPly === move.ply} class:player-move={move.side === playerSide} onclick={() => browsePly(move.ply)}>{move.ply % 2 === 1 ? `${moveNumber(move)}.` : ""} {move.san}</button>
         {/each}

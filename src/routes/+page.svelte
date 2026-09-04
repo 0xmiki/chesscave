@@ -306,7 +306,7 @@
 
   <AppHeader
     active="home"
-    title={dashboard ? profileTitle : "Your chess, ready to study"}
+    title={dashboard ? profileTitle : "Your Chess.com games"}
     subtitle={dashboard
       ? `Chess.com · Updated ${formatSyncDate(dashboard.fetchedAtMs)}`
       : "Connect a public Chess.com profile"}
@@ -318,10 +318,10 @@
       <section class="onboarding" aria-labelledby="onboarding-title">
         <div class="onboarding-copy">
           <span class="eyebrow">CHESS.COM LIBRARY</span>
-          <h2 id="onboarding-title">Bring your games into the cave.</h2>
+          <h2 id="onboarding-title">Load your Chess.com games.</h2>
           <p>
-            Connect a public username once. ChessCave will keep your recent Rapid
-            and Blitz games close, then open any of them directly in the study board.
+            Enter a public username to see recent Rapid and Blitz games. Select a
+            game to review it in Study.
           </p>
         </div>
 
@@ -339,7 +339,7 @@
               disabled={syncing}
             />
             <button type="submit" disabled={syncing || !usernameInput.trim()}>
-              {syncing ? "Connecting…" : "Connect profile"}
+              {syncing ? "Loading…" : "Load games"}
             </button>
           </div>
           {#if syncError}<p class="form-error" role="alert">{syncError}</p>{/if}

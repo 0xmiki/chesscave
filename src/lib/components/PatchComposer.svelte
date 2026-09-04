@@ -73,10 +73,10 @@
 <div class="patch-composer" role="tabpanel">
   <div class="patch-source">
     <div class="source-copy">
-      <span>PATCH THIS DECISION</span>
+      <span>MAKE A DRILL</span>
       <strong>{positionLabel}</strong>
       <small>
-        {playedMove ? `You played ${playedMove}` : "Choose the move you want to remember"}
+        {playedMove ? `You played ${playedMove}` : "Choose a move to practice"}
       </small>
       <div class="decision-facts">
         {#if playedMove}<span>Played <strong>{playedMove}</strong></span>{/if}
@@ -97,9 +97,9 @@
     <section class="saved-state" aria-live="polite">
       <span class="saved-mark" aria-hidden="true">✓</span>
       <div>
-        <span>PATCH SAVED</span>
-        <h2>Ready to practice.</h2>
-        <p>This position is due now. Recall the move on the board before reading the lesson.</p>
+        <span>DRILL SAVED</span>
+        <h2>The drill is ready.</h2>
+        <p>Open Drill and play the move on the board.</p>
       </div>
       <div class="saved-actions">
         <button type="button" class="quiet" onclick={startAnother}>Create another</button>
@@ -118,7 +118,7 @@
         <strong>{draft.quiz.acceptedMoves.map((move) => move.san).join(" · ")}</strong>
       </div>
       <div class="diagnosis-preview">
-        <span>YOUR DIAGNOSIS</span>
+        <span>YOUR MISTAKE</span>
         <p>{draft.diagnosis.mistake}</p>
         <small>Your correction: {draft.diagnosis.proposedCorrection}</small>
       </div>
@@ -158,7 +158,7 @@
     >
       <div class="question">
         <label for="patch-mistake">What mistake did you make?</label>
-        <small>Describe what you saw, missed, or assumed at this moment.</small>
+        <small>Describe what you missed or misunderstood.</small>
         <textarea
           id="patch-mistake"
           value={mistake}
@@ -168,13 +168,13 @@
           }}
           rows="3"
           maxlength={maximumReflectionLength}
-          placeholder="I focused on my attack and missed their threat…"
+          placeholder="I missed the threat to my queen."
           disabled={busy}
         ></textarea>
       </div>
       <div class="question">
         <label for="patch-correction">What was the right move or idea?</label>
-        <small>Give a legal move if you know it, then describe the idea you want to recognize.</small>
+        <small>Enter a legal move if you know it, then explain why it works.</small>
         <textarea
           id="patch-correction"
           value={correction}
@@ -192,13 +192,13 @@
       <div class:ready={readyToCreate} class="creation-status" role="status">
         <span></span>
         {#if busy}
-          Codex is shaping your reflection into one board-first drill…
+          Codex is writing the drill…
         {:else if readyToCreate}
-          {verifiedMove ? `Ready · Stockfish will verify against ${verifiedMove}` : "Ready · ChessCave will verify the position first"}
+          {verifiedMove ? `Ready · Stockfish will check ${verifiedMove}` : "Ready · Stockfish will check the position"}
         {:else}
           {hasReflection
-            ? "Draft kept with this position · complete both reflections to create the patch."
-            : "Complete both reflections to create the patch."}
+            ? "Answer both questions to create the drill."
+            : "Answer both questions to create a drill."}
         {/if}
       </div>
       <button
@@ -206,7 +206,7 @@
         class="generate"
         disabled={busy || !readyToCreate}
       >
-        {busy ? "Designing the flashcard…" : "Create with Codex"}
+        {busy ? "Creating drill…" : "Create drill"}
       </button>
     </form>
   {/if}

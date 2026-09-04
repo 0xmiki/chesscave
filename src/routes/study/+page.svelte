@@ -460,7 +460,7 @@
       clearCoachStartupTimer();
       coachStartAttempts = 0;
       coachStatus = "ready";
-      coachDetail = "Current position synced";
+      coachDetail = "Position ready";
       queueMicrotask(runQueuedCoachRetry);
       return;
     }
@@ -997,7 +997,7 @@
       const detail = patchError || "ChessCave could not create this drill.";
       failActiveCoachRequest(detail);
       coachStatus = "ready";
-      coachDetail = "Current position synced";
+      coachDetail = "Position ready";
       coachActivity = null;
       addCoachNotice(`I couldn't create that drill yet. ${patchError}`);
     }
@@ -1011,10 +1011,10 @@
     return {
       mistake: mistake.trim(),
       prompt: playedSan
-        ? `You played ${playedSan}. Find the move that patches the mistake.`
-        : "Find the move you want to recognize in this position.",
+        ? `You played ${playedSan}. Find the best move.`
+        : "Find the best move in this position.",
       explanation: `${mistake.trim()} The corrective move is ${acceptedSan}.`,
-      principle: "Pause, identify the opponent’s resources, and compare forcing moves before committing.",
+      principle: "Check the opponent's threats and forcing moves before you play.",
     };
   }
 
@@ -1056,11 +1056,11 @@
         [contextKey]: { mistake: "", correction: "" },
       };
       addCoachNotice(
-        `Done — I created and saved a drill for this position. The verified answer is **${card.quiz.acceptedMoves[0]?.san ?? "the best move"}**. You can practice it from Drill.`,
+        `Drill saved. The answer is **${card.quiz.acceptedMoves[0]?.san ?? "the best move"}**. Open Drill to practice it.`,
       );
       completeActiveCoachRequest();
       coachStatus = "ready";
-      coachDetail = "Current position synced";
+      coachDetail = "Position ready";
       coachActivity = null;
     } catch (error) {
       patchDraft = card;
@@ -1146,11 +1146,11 @@
 
       patchResponse = "";
       coachStatus = "thinking";
-      coachDetail = "Codex is designing the patch…";
+      coachDetail = "Codex is writing the drill…";
       coachActivity = {
         kind: "thinking",
         label: "Writing the drill",
-        detail: "Sol is turning the verified position into a focused practice card.",
+        detail: "Sol is writing a drill for this position.",
       };
       const prompt = [
         "Create one concise chess flashcard from the student's diagnosis.",
@@ -1266,31 +1266,31 @@
       get_position_image: [
         `${verb} board image`,
         waiting
-          ? "ChessCave is rendering the requested position."
-          : "Opening the position through ChessCave MCP.",
+          ? "ChessCave is creating the board image."
+          : "ChessCave is loading the position.",
       ],
       get_game_review: [
-        `${verb} full-game review`,
+        `${verb} game review`,
         waiting
-          ? "ChessCave is loading the saved Stockfish review."
-          : "Reading the game evidence through ChessCave MCP.",
+          ? "ChessCave is loading the Stockfish review."
+          : "ChessCave is reading the saved review.",
       ],
       analyze_position: [
         `${verb} Stockfish analysis`,
         waiting
-          ? "Stockfish is calculating candidate moves."
-          : "Sending this position to the ChessCave engine.",
+          ? "Stockfish is checking possible moves."
+          : "Stockfish is analyzing this position.",
       ],
       compare_moves: [
         `${verb} move comparison`,
         waiting
           ? "Stockfish is comparing the played move and best line."
-          : "Sending both lines to the ChessCave engine.",
+          : "Stockfish is comparing both moves.",
       ],
     };
     const [label, detail] = labels[tool] ?? [
-      `${verb} ChessCave tool`,
-      waiting ? "Waiting for the MCP result." : `Using ${tool} through MCP.`,
+      `${verb} chess data`,
+      waiting ? "Waiting for ChessCave." : "ChessCave is loading the requested data.",
     ];
     return { kind: waiting ? "waiting" : "calling", label, detail };
   }
@@ -1304,7 +1304,7 @@
       clearCoachStartupTimer();
       coachStartAttempts = 0;
       coachStatus = "ready";
-      coachDetail = "Current position synced";
+      coachDetail = "Position ready";
       queueMicrotask(runQueuedCoachRetry);
       return;
     }
@@ -1329,7 +1329,7 @@
       clearCoachStartupTimer();
       coachStartAttempts = 0;
       coachStatus = "ready";
-      coachDetail = "Current position synced";
+      coachDetail = "Position ready";
       queueMicrotask(runQueuedCoachRetry);
       return;
     }
@@ -1399,7 +1399,7 @@
         coachActivity = {
           kind: "replying",
           label: "Writing a response",
-          detail: "Sol is turning the evidence into a clear explanation.",
+          detail: "Sol is writing an answer.",
         };
         coachDetail = coachActivity.label;
         const messageId = String(item.id ?? crypto.randomUUID());
@@ -1454,7 +1454,7 @@
           : {
               kind: "thinking",
               label: "Reviewing the tool result",
-              detail: "Sol is connecting the evidence to your question.",
+              detail: "Sol is reading the Stockfish result.",
             };
         coachDetail = coachActivity.label;
       }
@@ -1487,7 +1487,7 @@
           failActiveCoachRequest(detail);
         }
         coachStatus = "ready";
-        coachDetail = "Request failed — you can retry it";
+        coachDetail = "Request failed. You can retry it.";
         coachActivity = null;
         activeCoachTools = {};
         return;
@@ -1499,7 +1499,7 @@
       if (!completingDrill) {
         completeActiveCoachRequest();
         coachStatus = "ready";
-        coachDetail = "Current position synced";
+        coachDetail = "Position ready";
         coachActivity = null;
       }
       activeCoachTools = {};
@@ -1511,7 +1511,7 @@
   <title>Study — ChessCave</title>
   <meta
     name="description"
-    content="A private chess study powered by Stockfish and your Codex coach."
+    content="Review a chess game with Stockfish and ask Codex about each position."
   />
 </svelte:head>
 
@@ -1724,7 +1724,7 @@
                       ? `mate in ${Math.abs(principal.scoreMate)}`
                       : `${(principal.scoreCp ?? 0) >= 0 ? "+" : ""}${((principal.scoreCp ?? 0) / 100).toFixed(2)}`}
                   </strong>
-                  from White’s perspective.
+                  for White.
                 </p>
               {/if}
             </div>
@@ -1860,7 +1860,7 @@
         </div>
         <button type="button" onclick={() => (importOpen = false)}>×</button>
       </div>
-      <p>Paste a complete game. ChessCave will build its timeline and make every position available to Stockfish and Sol.</p>
+      <p>Paste a complete PGN. ChessCave will load every move for Stockfish and Sol.</p>
       <textarea bind:value={pgnDraft} rows="13" placeholder={'[Event "My game"]\n\n1. e4 e5 2. Nf3 …'}></textarea>
       {#if importError}<div class="import-error">{importError}</div>{/if}
       <div class="modal-actions">

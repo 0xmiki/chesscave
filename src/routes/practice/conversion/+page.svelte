@@ -376,18 +376,18 @@
   }
 
   function resultTitle(result: AttemptResult | null): string {
-    if (result === "win") return "Position converted";
+    if (result === "win") return "You won";
     if (result === "draw") return "The win became a draw";
     if (result === "time") return "Flagged under the original clock";
-    if (result === "stopped") return "Attempt reviewed early";
-    return "Stockfish escaped";
+    if (result === "stopped") return "Attempt ended early";
+    return "Stockfish won";
   }
 
   function exerciseTitle(item: ConversionExercise): string {
     if (item.title) return item.title;
-    if (item.kind === "convert") return "Close it out";
+    if (item.kind === "convert") return "Finish the win";
     if (item.kind === "rescue") return "Save the win";
-    return "Replay key moment";
+    return "Replay the position";
   }
 
   function phaseLabel(value: string): string {
@@ -395,10 +395,10 @@
   }
 
   function leakLabel(item: ConversionExercise): string {
-    if (item.leak === "tactical") return "A single tactical drop decided the original game.";
-    if (item.leak === "time") return "The original turning point came with under 30 seconds.";
-    if (item.leak === "endgame") return "The advantage leaked in an endgame position.";
-    return "The original advantage faded over several decisions.";
+    if (item.leak === "tactical") return "One tactical mistake decided the original game.";
+    if (item.leak === "time") return "You lost the advantage with under 30 seconds left.";
+    if (item.leak === "endgame") return "You lost the advantage in the endgame.";
+    return "You lost the advantage over several moves.";
   }
 </script>
 
@@ -418,7 +418,7 @@
   <AppHeader
     active="study"
     title="Conversion Trainer"
-    subtitle="Turn advantages into points"
+    subtitle="Practice winning positions from your games"
     actions={headerActions}
   />
 
@@ -452,10 +452,10 @@
     {:else if !exercises.length}
       <section class="state-card">
         <span class="eyebrow">NO FAILED CONVERSION</span>
-        <h2>This game does not contain the target pattern.</h2>
+        <h2>No training position was found.</h2>
         <p>
-          ChessCave looks for a game you did not win after reaching at least 75%
-          expected score. Open another reviewed loss or draw and try again.
+          ChessCave looks for a loss or draw where Stockfish gave you an expected
+          score of at least 75%. Open another reviewed game and try again.
         </p>
         <div class="side-options">
           <a class="primary-link" href="/">Choose another game</a>
@@ -471,10 +471,10 @@
           <h2>{exerciseTitle(exercise)}</h2>
           <p class="brief-copy">
             {exercise.kind === "replay"
-              ? "Take over at this highlighted decision and play the position forward."
+              ? "Start from this move and finish the game."
               : exercise.kind === "convert"
-              ? "Play from the first stable advantage and finish the game."
-              : "Replay the critical moment before the advantage disappeared."}
+              ? "Start from the first winning position and finish the game."
+              : "Replay the move before you lost the advantage."}
           </p>
 
           <div class="exercise-tabs" aria-label="Conversion exercises">
@@ -495,7 +495,7 @@
 
           <dl class="position-facts">
             <div>
-              <dt>Starting edge</dt>
+              <dt>Starting score</dt>
               <dd>{Math.round(exercise.startingExpectedPoints * 100)}%</dd>
             </div>
             <div>
@@ -511,7 +511,7 @@
           {#if status === "ready"}
             <div class="setup">
               <label>
-                Sparring strength
+                Stockfish strength
                 <select bind:value={difficulty}>
                   <option value="supportive">Supportive</option>
                   <option value="club">Club</option>
@@ -547,7 +547,7 @@
                   ? "Your move"
                   : status === "engine-error"
                     ? "Engine reply interrupted"
-                    : "Stockfish is choosing a practical reply…"}
+                    : "Stockfish is choosing a move…"}
               </span>
             </div>
             <button
@@ -625,7 +625,7 @@
                 <strong>{Math.round(exercise.startingExpectedPoints * 100)}%</strong>
               </div>
               <div>
-                <span>Lowest measured</span>
+                <span>Lowest score</span>
                 <strong>{lowestExpectedPoints === null ? "—" : `${Math.round(lowestExpectedPoints * 100)}%`}</strong>
               </div>
             </div>
@@ -633,17 +633,17 @@
             <div class="feedback-block">
               <span>THIS ATTEMPT</span>
               {#if firstSlip}
-                <strong>Control first slipped after {firstSlip.san}.</strong>
+                <strong>Your score first dropped after {firstSlip.san}.</strong>
                 <p>
                   Expected score moved from {Math.round(firstSlip.before * 100)}%
                   to {Math.round((firstSlip.expectedPoints ?? 0) * 100)}%.
                 </p>
               {:else if attemptResult === "win"}
-                <strong>You kept the position under control.</strong>
-                <p>Repeat it once more to make the technique reliable.</p>
+                <strong>You won without a large drop.</strong>
+                <p>Try it again if you want more practice.</p>
               {:else}
                 <strong>No single large drop was measured.</strong>
-                <p>The result came from accumulated decisions or the final game-ending move.</p>
+                <p>Several small changes or the final move decided the result.</p>
               {/if}
             </div>
 
@@ -679,7 +679,7 @@
               <ol>
                 <li>What is the opponent threatening?</li>
                 <li>Check forcing moves for both sides.</li>
-                <li>Reduce counterplay before rushing.</li>
+                <li>Stop the opponent's threats before attacking.</li>
                 <li>Trade pieces only when it helps.</li>
               </ol>
             </div>
