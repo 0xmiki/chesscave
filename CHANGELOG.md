@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+- Fixed piece dragging so the piece follows the pointer and drops without a
+  second travel animation.
+- Restored the current-position best-move arrow in Play.
+- Made Codex insight manual instead of generating commentary after every move.
+- Added a switch for the best-move arrow and engine line.
+- Kept Left and Right history controls working while the board has focus.
+- Improved Play and Drill typography, labels, and buttons.
+- Rebuilt the README around screenshots of each main screen.
+
 ## 0.1.0
 
 Initial desktop release.

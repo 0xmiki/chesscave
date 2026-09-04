@@ -1,6 +1,6 @@
 [package]
 name = "chesscave"
-version = "0.1.0"
+version = "0.1.2"
 description = "A desktop app for playing, reviewing, and practicing chess."
 license = "MIT"
 publish = false

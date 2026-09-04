@@ -1,117 +1,159 @@
 <p align="center">
-  <img src="static/chesscave-logo.svg" width="96" alt="ChessCave logo">
+  <img src="static/chesscave-logo.svg" width="72" alt="ChessCave logo">
 </p>
 
-![ChessCave](docs/image.png)
+<h1 align="center">ChessCave</h1>
 
-ChessCave is a private desktop app for playing chess, reviewing your games, and
-practicing the mistakes you want to remember. Stockfish checks the chess. A
-Codex coach explains positions and answers questions in plain language.
+<p align="center">
+  <strong>Play, review, and practice chess on your own computer.</strong>
+</p>
 
-ChessCave stores your studies, notes, reviews, and practice cards on your
-computer. Home requests public Chess.com data for the username you choose. When
-you use the coach, ChessCave gives Codex the current game or position and your
-question so it can answer.
+<p align="center">
+  <a href="https://github.com/0xmiki/chesscave/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/0xmiki/chesscave?color=cc6b50"></a>
+  <a href="https://github.com/0xmiki/chesscave/actions/workflows/ci.yml"><img alt="Build status" src="https://github.com/0xmiki/chesscave/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white">
+  <img alt="Data stored locally" src="https://img.shields.io/badge/data-stored%20locally-77816a">
+</p>
 
-## Required: install Stockfish
+<p align="center">
+  <a href="https://github.com/0xmiki/chesscave/releases/latest">Download</a>
+  · <a href="CHANGELOG.md">Changelog</a>
+  · <a href="docs/architecture.md">Architecture</a>
+</p>
 
-ChessCave does not include Stockfish. Install it before opening the app.
-Download the correct build for Windows, macOS, or Linux from the
-[official Stockfish download page](https://stockfishchess.org/download/), or use
-your system package manager.
+![A reviewed game with Codex coaching in ChessCave](docs/screenshots/study.png)
 
-After installation, make sure the `stockfish` command is on your system
-`PATH`:
+<p align="center"><sub>Review a complete game with Stockfish, explore the board, and ask Codex about the position.</sub></p>
+
+ChessCave is a desktop app for studying your own chess. It can load recent
+Chess.com games or a PGN, run a Stockfish review, save mistakes as drills, and
+keep chess notes. Your studies, reviews, drills, and notes stay on your
+computer. Codex is optional and responds only when you ask.
+
+## Before you install
+
+[Stockfish](https://stockfishchess.org/download/) is required and is not bundled
+with ChessCave. Install it, then check that this command works:
 
 ```sh
 stockfish
 ```
 
-Type `quit` to close the engine. If you keep Stockfish elsewhere, set
-`CHESSCAVE_STOCKFISH_PATH` to the executable's full path before starting
-ChessCave.
+Type `quit` to close the engine. ChessCave looks for `stockfish` on the system
+`PATH`. If the executable is elsewhere, set `CHESSCAVE_STOCKFISH_PATH` to its
+full path before starting the app.
 
-Codex commentary and the Study coach also need a working local Codex installation
-and login. The rest of the chess analysis only needs Stockfish.
+The Codex coach is optional. It needs a working local Codex installation and
+login. ChessCave sends Codex the current game or position only after you ask for
+an explanation.
 
-## What you can do
+## Download
+
+Installers are attached to the
+[latest GitHub release](https://github.com/0xmiki/chesscave/releases/latest).
+
+| System | Files |
+| --- | --- |
+| Linux x64 | `.deb` and `.AppImage` |
+| Windows x64 | `.exe` and `.msi` |
+| macOS Apple Silicon | `aarch64.dmg` |
+| macOS Intel | `x64.dmg` |
+
+Windows builds are currently unsigned. macOS builds use ad-hoc signing. The
+operating system may ask you to confirm that you want to open the app.
+
+## What it does
+
+- **Play.** Play Stockfish as White or Black, or move both colors in self-play.
+- **Coach view.** Show the evaluation, move labels, best-move arrow, and engine
+  line. Best-move help has its own switch.
+- **Codex insight.** Request one explanation of the current position. ChessCave
+  does not generate commentary after every move.
+- **Study.** Review a Chess.com game or imported PGN with Stockfish. Step through
+  moves, compare alternatives, and inspect accuracy and turning points.
+- **Drill.** Save a mistake from Study and replay the position later. Stockfish
+  checks the answer before the drill is saved.
+- **Conversion Trainer.** Replay a position where a winning advantage slipped
+  away and try to finish the game against Stockfish.
+- **Notes.** Keep pages and nested pages for openings, games, and plans.
+- **Local storage.** Reviews, drills, and notes stay on the computer running the
+  app.
+
+## Screens
 
 ### Home
 
-Enter a Chess.com username to see its public profile, current Rapid and Blitz
-ratings, recent rating changes, and recent games. Choose a game to open it in
-Study. ChessCave remembers the username and the last loaded dashboard on this
-device.
+![Chess.com ratings and recent games on the ChessCave Home screen](docs/screenshots/home.png)
+
+Enter a Chess.com username to see its public Rapid and Blitz ratings, recent
+rating changes, and latest games. Open any listed game in Study.
 
 ### Play
 
-Play a full game against Stockfish as White or Black, or choose Self play to
-move both colors. Turn on Coach view to see the evaluation, move labels, and
-best-move arrows. In self-play, the arrow follows the side to move. The Best
-moves toggle hides the arrow and engine line. Press Get Codex insight when you
-want commentary on the current position.
+![A ChessCave game with evaluation and a best-move arrow](docs/screenshots/play.png)
+
+Play Stockfish or control both sides. Coach view adds engine feedback. Turn off
+Best moves when you want to play without the arrow and line. Use Get Codex
+insight when you want a short explanation of the position.
 
 ### Study
 
-Open a recent Chess.com game or paste a game in PGN format. Stockfish reviews
-the full game and shows:
+![A reviewed game and Codex conversation on the ChessCave Study screen](docs/screenshots/study.png)
 
-- the evaluation after each move
-- mistakes, missed chances, and strong moves
-- the best move and other useful lines
-- a graph of how the winning chances changed
-- accuracy for each player and for each part of the game
-- the opening name
-
-Use the arrow keys or board controls to move through the game. You can make
-legal moves on the board to try a different line without changing the imported
-game.
-
-The Coach tab lets you ask questions about the current position. The Patch tab
-turns one of your mistakes into a practice card. Stockfish checks the answer
-before the card is saved.
+Open a recent game or paste PGN. Stockfish reviews every move and shows
+accuracy, move labels, the evaluation graph, engine lines, and the opening. Try
+legal alternatives on the board without changing the imported game.
 
 ### Drill
 
-Practice the cards you made in Study. Each card starts at the position where
-you made a mistake and asks you to choose a move on the board. The answer and
-lesson stay hidden until you commit to a move.
+![A completed practice drill in ChessCave](docs/screenshots/drill.png)
 
-Afterward, choose **Again** if you need another look or **Understood** if the
-idea was clear. ChessCave uses that answer to decide when the card should return.
-You can also reopen the source game or delete a card.
+Practice positions saved from Study. Choose Again to repeat the drill soon or
+Understood to schedule it later. The source game remains one click away.
 
 ### Notes
 
-Keep private chess notes on this device. Create pages and nested pages, then add
-paragraphs, headings, lists, quotes, tasks, and code blocks. Type `/` to choose a
-block type. Notes save as you write and support undo and redo.
+![Local chess notes in ChessCave](docs/screenshots/notes.png)
 
-### Conversion Trainer
+Create pages and nested pages with paragraphs, headings, lists, quotes, tasks,
+and code blocks. Type `/` to change the block type. Notes save as you write.
 
-After Stockfish reviews a game in Study, choose **Practice this lead** to replay
-a position where you had a winning advantage. Pick a playing strength and try
-to finish the game against Stockfish. You can use the clock from the original
-game when one is available. At the end, ChessCave shows where the advantage
-started to slip.
+## Controls
 
-## Board controls
+| Input | Action |
+| --- | --- |
+| Drag a piece | Move it to a legal square |
+| Click two squares | Select and move a piece |
+| Left / Right | Move backward or forward through game history |
+| Shift + Arrow keys | Move keyboard focus between board squares |
+| Right-drag | Draw a yellow arrow |
+| Shift / Ctrl / Alt + right-drag | Draw a green, red, or blue arrow |
+| Right-click | Mark a square |
+| `1` / `2` in Drill | Again / Understood |
 
-- Press Left or Right to move backward or forward through a game. These keys do
-  nothing while you are typing in a field.
-- Hold Shift and press an arrow key to move keyboard focus between board
-  squares.
-- Drag a piece to a legal square, or select the source and destination squares.
-- Right-drag on the board to draw a yellow arrow. Hold Shift for green, Ctrl for
-  red, or Alt for blue.
-- Right-click a square to highlight it.
-- Left-click the board or change the position to clear your arrows and
-  highlights.
-- In Study, reviewed moves may show Stockfish's better move as a green arrow.
+Arrow keys do nothing while you are typing in a field.
 
-## NixOS setup
+## Run from source
 
-On NixOS, add Stockfish to `configuration.nix`:
+Install [Bun](https://bun.sh/), Rust, the
+[Tauri system dependencies](https://v2.tauri.app/start/prerequisites/), and
+Stockfish. Then run:
+
+```sh
+bun install --frozen-lockfile
+bun run tauri dev
+```
+
+On NixOS, the included shell provides Rust and the Linux build packages:
+
+```sh
+nix-shell
+bun install --frozen-lockfile
+bun run tauri dev
+```
+
+Stockfish must still be installed system-wide on NixOS:
 
 ```nix
 environment.systemPackages = with pkgs; [
@@ -119,58 +161,70 @@ environment.systemPackages = with pkgs; [
 ];
 ```
 
-Apply the change, open a new terminal, and check that Stockfish is available:
+Use `CHESSCAVE_CODEX_PATH` and `CHESSCAVE_NODE_PATH` if those commands have
+non-standard names.
+
+## Checks
+
+Run the complete local check before committing code:
 
 ```sh
-sudo nixos-rebuild switch
-command -v stockfish
+bun run release:check
 ```
 
-You can use `CHESSCAVE_CODEX_PATH` and `CHESSCAVE_NODE_PATH` when those
-commands have non-standard names.
+This runs Svelte and TypeScript checks, all frontend tests, the production web
+build, Rust formatting, Clippy, and Rust tests.
 
-## Run the app for development
-
-The included Nix shell provides Rust and the Linux packages needed to build the
-desktop app:
+The live Codex check needs Stockfish and a local Codex login:
 
 ```sh
-nix-shell
-bun install
-bun run tauri dev
+bun run smoke:coach
 ```
 
-If those packages are already installed, run `bun install` and
-`bun run tauri dev` directly.
+## Build installers
 
-## Where the data comes from
+```sh
+bun run tauri build
+```
 
-### Chess.com
+Tauri writes installers to `src-tauri/target/release/bundle/`. On NixOS,
+`linuxdeploy` may fail while making an AppImage. Build Debian and RPM packages
+locally, then let the Ubuntu release runner make the AppImage:
 
-Home uses Chess.com's read-only
-[Published Data API](https://support.chess.com/en/articles/9650547-what-is-the-pubapi-and-how-do-i-use-it).
-It requests the selected public profile, ratings, and recent games. ChessCave
-stores the chosen username and the latest dashboard copy in the app. Chess.com
-may return cached data for up to twelve hours.
+```sh
+bun run tauri build --bundles deb,rpm
+```
 
-When you open a game, ChessCave saves its PGN as the active study. A finished
-Stockfish review is also saved, so opening the same game again does not repeat
-the full review.
+## Publish a release
 
-### Opening names
+Update the version in `package.json`, `src-tauri/tauri.conf.json`, and
+`src-tauri/Cargo.toml`. Commit the change, then push the matching tag:
 
-Opening names come from the CC0
-[`lichess-org/chess-openings`](https://github.com/lichess-org/chess-openings)
-data included in the app. ChessCave does not contact an opening service. See
-[data/openings/README.md](data/openings/README.md) for the included version and
-the update command.
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
 
-### Move labels and accuracy
+The release workflow runs every check and builds Linux, Windows, Intel macOS,
+and Apple Silicon macOS installers. GitHub creates a draft release with the
+files attached. Review the draft before publishing it.
 
-ChessCave calculates move labels, winning chances, and accuracy with published
-methods from Chesskit and Lichess. The app has its own Rust and TypeScript
-implementation and adds opening moves, positive move labels, and missed-chance
-checks.
+## Data and analysis
+
+- Home reads public profiles and games from the Chess.com
+  [Published Data API](https://support.chess.com/en/articles/9650547-what-is-the-pubapi-and-how-do-i-use-it).
+  Chess.com may return cached data for up to twelve hours.
+- Opening names come from the CC0
+  [`lichess-org/chess-openings`](https://github.com/lichess-org/chess-openings)
+  data included with the app.
+- Finished Stockfish reviews are saved locally. Opening the same game again does
+  not repeat the full review unless you request it.
+
+<details>
+<summary>Move labels, accuracy, and source material</summary>
+
+ChessCave implements published Chesskit and Lichess methods for winning
+chances, accuracy, move classification, and game phases:
 
 - [Chesskit win percentage](https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/winPercentage.ts)
 - [Chesskit accuracy](https://github.com/GuillaumeSD/Chesskit/blob/main/src/lib/engine/helpers/accuracy.ts)
@@ -181,87 +235,36 @@ checks.
 - [`Divider.scala`](https://github.com/lichess-org/scalachess/blob/master/core/src/main/scala/Divider.scala)
 - [Lichess winning-chance discussion](https://github.com/lichess-org/lila/pull/11148)
 
-The Lichess code linked above uses the GNU Affero General Public License 3.0 or
-later.
+The linked Lichess code uses the GNU Affero General Public License 3.0 or later.
 
-ChessCave's brilliant-move check also draws on these public descriptions and
-research:
+The brilliant-move check also draws on these public descriptions and research:
 
 - [Chess.com's Brilliant and Great Move rules](https://support.chess.com/en/articles/8572705-how-are-moves-classified-what-is-a-blunder-or-brilliant-etc)
 - [Zaidi and Guerzhoy, "Predicting User Perception of Move Brilliance in Chess"](https://arxiv.org/abs/2406.11895)
 - [`kamronzaidi/brilliant-moves-clf`](https://github.com/kamronzaidi/brilliant-moves-clf)
 - [`dev-arcturus/positional_chess`](https://github.com/dev-arcturus/positional_chess)
 
-ChessCave does not copy code from those projects. Its check uses the legal
-captures in the position, the material changes in a short Stockfish line, the
-player's rating when the PGN includes it, and Stockfish's saved search results.
+ChessCave does not copy code from those projects. It checks legal captures,
+material changes in a short Stockfish line, the player's rating when available,
+and saved Stockfish search results.
 
-## Checks
+</details>
 
-`bun run release:check` runs the Svelte and TypeScript checks, frontend tests,
-the production web build, Rust formatting, Clippy, and Rust tests.
+## Project layout
 
-```sh
-bun run release:check
-```
+- `src/` contains the Svelte interface and short-lived screen state.
+- `src-tauri/` contains the Rust desktop process, Stockfish integration, Codex
+  process management, and local SQLite storage.
+- `scripts/` contains the local ChessCave MCP server and data-build tools.
+- `data/openings/` contains the pinned opening-name data.
 
-Run the live coach check separately because it needs Stockfish and a local Codex
-login:
+Read [docs/architecture.md](docs/architecture.md) and
+[docs/game-review.md](docs/game-review.md) for more detail.
 
-```sh
-bun run smoke:coach
-```
-
-Build the desktop installers after all checks pass:
-
-```sh
-bun run tauri build
-```
-
-The installers are written under `src-tauri/target/release/bundle/`. Code
-signing and platform store credentials must be configured outside this
-repository before publishing.
-
-On NixOS, `linuxdeploy` may fail while creating the AppImage. Build the Debian
-and RPM packages locally, then build the AppImage on Ubuntu:
-
-```sh
-bun run tauri build --bundles deb,rpm
-```
-
-## Create a release
-
-Update the version in `package.json`, `src-tauri/tauri.conf.json`, and
-`src-tauri/Cargo.toml`. Commit those changes, then push a matching tag:
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The release workflow runs all checks and builds these installers:
-
-- Linux x64: Debian package and AppImage
-- Windows x64: NSIS and MSI installers
-- macOS: DMG files for Apple Silicon and Intel
-
-GitHub creates a draft release and attaches the installers. Review the draft
-before publishing it. The macOS builds use ad-hoc signing until Apple signing
-and notarization credentials are configured. Windows builds are unsigned until
-a Windows signing certificate is configured.
-
-## Project structure
-
-Svelte draws the app and handles short-lived screen state. Rust runs Stockfish
-and Codex, reads and writes local files, and manages those processes. The Codex
-coach can read the active chess position and saved review, but it cannot change
-them directly.
-
-More detail is in [docs/architecture.md](docs/architecture.md) and
-[docs/game-review.md](docs/game-review.md).
+## License
 
 ChessCave uses the [MIT License](LICENSE).
 
-Stockfish uses the GNU General Public License version 3. Any distributed build
-that includes Stockfish must also include its license and the source information
-required by that license.
+Stockfish uses the GNU General Public License version 3. ChessCave does not
+bundle Stockfish. If that changes, distributed builds must include Stockfish's
+license and source information.
