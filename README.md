@@ -226,6 +226,27 @@ and RPM packages locally, then build the AppImage on Ubuntu:
 bun run tauri build --bundles deb,rpm
 ```
 
+## Create a release
+
+Update the version in `package.json`, `src-tauri/tauri.conf.json`, and
+`src-tauri/Cargo.toml`. Commit those changes, then push a matching tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow runs all checks and builds these installers:
+
+- Linux x64: Debian package and AppImage
+- Windows x64: NSIS and MSI installers
+- macOS: DMG files for Apple Silicon and Intel
+
+GitHub creates a draft release and attaches the installers. Review the draft
+before publishing it. The macOS builds use ad-hoc signing until Apple signing
+and notarization credentials are configured. Windows builds are unsigned until
+a Windows signing certificate is configured.
+
 ## Project structure
 
 Svelte draws the app and handles short-lived screen state. Rust runs Stockfish
