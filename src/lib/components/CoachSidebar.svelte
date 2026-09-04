@@ -2,6 +2,11 @@
   import { tick } from "svelte";
   import type { CoachActivity, CoachMessage } from "$lib/chess/types";
   import { renderCoachMarkdown } from "$lib/chat/markdown";
+  import {
+    isTranscriptAtBottom,
+    shouldSendComposerKey,
+    shouldStopCoachKey,
+  } from "$lib/chat/sidebar";
 
   let {
     messages,
@@ -14,6 +19,9 @@
     onNewConversation,
     onRetry,
     onRetryMessage,
+    onStop,
+    canStop,
+    draft = $bindable(""),
   }: {
     messages: CoachMessage[];
     status: "offline" | "starting" | "ready" | "thinking" | "error";
@@ -25,9 +33,11 @@
     onNewConversation: () => void;
     onRetry: () => void;
     onRetryMessage: (id: string) => void;
+    onStop: () => void;
+    canStop: boolean;
+    draft?: string;
   } = $props();
 
-  let draft = $state("");
   let messagesElement: HTMLDivElement;
   let composerElement: HTMLTextAreaElement;
   let followingLatest = $state(true);
@@ -71,18 +81,60 @@
 
   function resizeComposer() {
     if (!composerElement) return;
+    const keepFollowing = followingLatest;
     composerElement.style.height = "0px";
     composerElement.style.height = `${Math.min(composerElement.scrollHeight, 120)}px`;
+    if (keepFollowing) {
+      void tick().then(scrollToLatest);
+    }
   }
 
   function handleMessagesScroll() {
     if (!messagesElement) return;
-    const distance =
-      messagesElement.scrollHeight -
-      messagesElement.scrollTop -
-      messagesElement.clientHeight;
-    followingLatest = distance < 56;
+    followingLatest = isTranscriptAtBottom(
+      messagesElement.scrollHeight,
+      messagesElement.scrollTop,
+      messagesElement.clientHeight,
+    );
     showLatest = !followingLatest;
+  }
+
+  function handleMessagesWheel(event: WheelEvent) {
+    if (event.deltaY >= 0) return;
+    followingLatest = false;
+    showLatest = true;
+  }
+
+  function retryMessage(id: string) {
+    followingLatest = true;
+    showLatest = false;
+    onRetryMessage(id);
+  }
+
+  function retryConnection() {
+    followingLatest = true;
+    showLatest = false;
+    onRetry();
+  }
+
+  function stopResponse() {
+    if (!canStop) return;
+    followingLatest = true;
+    showLatest = false;
+    onStop();
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (!shouldStopCoachKey(event, canStop)) return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("[role='dialog'], [role='listbox'], [role='menu']")
+    ) {
+      return;
+    }
+    event.preventDefault();
+    stopResponse();
   }
 
   function scrollToLatest() {
@@ -132,6 +184,8 @@
   });
 </script>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 <section class="coach" aria-label="Coach">
   <header>
     <div class="coach-mark">S</div>
@@ -140,6 +194,18 @@
       <p>{contextLabel}</p>
     </div>
     <div class="header-actions">
+      {#if busy}
+        <button
+          class="stop-response"
+          type="button"
+          onclick={stopResponse}
+          disabled={!canStop}
+          aria-label="Stop response"
+          title={canStop ? "Stop response · Escape" : "Waiting for response to start"}
+        >
+          <span></span>
+        </button>
+      {/if}
       <button
         class="new-conversation"
         type="button"
@@ -161,9 +227,12 @@
     <div
       class="messages"
       bind:this={messagesElement}
+      role="log"
       aria-live="polite"
+      aria-relevant="additions text"
       aria-busy={busy}
       onscroll={handleMessagesScroll}
+      onwheel={handleMessagesWheel}
     >
     {#if messages.length === 0}
       <div class="welcome">
@@ -215,7 +284,11 @@
             {/if}
           </article>
         {:else}
-          <div class:failed={message.requestStatus === "failed"} class="message user">
+          <div
+            class:failed={message.requestStatus === "failed"}
+            class:stopped={message.requestStatus === "stopped"}
+            class="message user"
+          >
             <span class="user-label">You</span>
             <div class="bubble">{message.text}</div>
             {#if message.requestStatus === "pending"}
@@ -223,15 +296,21 @@
                 <span class="request-spinner" aria-hidden="true"></span>
                 {message.requestKind === "drill" ? "Creating drill…" : "Waiting for Sol…"}
               </div>
-            {:else if message.requestStatus === "failed"}
-              <div class="request-failure" role="alert">
+            {:else if message.requestStatus === "failed" || message.requestStatus === "stopped"}
+              <div class:stopped={message.requestStatus === "stopped"} class="request-failure" role="status">
                 <span>
-                  <strong>{message.requestKind === "drill" ? "Drill creation failed" : "Message failed"}</strong>
+                  <strong>
+                    {message.requestStatus === "stopped"
+                      ? "Response stopped"
+                      : message.requestKind === "drill"
+                        ? "Drill creation failed"
+                        : "Message failed"}
+                  </strong>
                   {#if message.error}<small>{message.error}</small>{/if}
                 </span>
                 <button
                   type="button"
-                  onclick={() => onRetryMessage(message.id)}
+                  onclick={() => retryMessage(message.id)}
                   disabled={busy || status === "starting" || status === "offline"}
                 >Retry</button>
               </div>
@@ -284,7 +363,7 @@
         aria-describedby="coach-composer-meta"
         oninput={resizeComposer}
         onkeydown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+          if (shouldSendComposerKey(event)) {
             event.preventDefault();
             submit();
           }
@@ -306,7 +385,7 @@
       <span class={`live-dot ${status}`}></span>
       <span class="composer-state">{composerStatus}</span>
       {#if status === "error"}
-        <button class="retry-coach" type="button" onclick={onRetry}>Retry coach</button>
+        <button class="retry-coach" type="button" onclick={retryConnection}>Retry coach</button>
       {:else if draft.length > maximumMessageLength * 0.8}
         <span class="character-count">{draft.length}/{maximumMessageLength}</span>
       {:else}
@@ -410,6 +489,31 @@ p {
   color: var(--ink-soft);
   background: var(--paper);
   cursor: pointer;
+}
+
+.stop-response {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #df9e8b;
+  border-radius: 50%;
+  color: var(--coral-dark);
+  background: var(--coral-soft);
+  cursor: pointer;
+}
+
+.stop-response span {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.stop-response:disabled {
+  cursor: wait;
+  opacity: 0.45;
 }
 
 .new-conversation:hover:not(:disabled) {
@@ -544,11 +648,19 @@ p {
   border-color: #df9e8b;
 }
 
+.user.stopped .bubble {
+  border-color: var(--line-strong);
+}
+
 .request-state,
 .request-failure {
   max-width: 88%;
   color: var(--muted);
   font-size: 9px;
+}
+
+.request-failure.stopped {
+  color: var(--muted);
 }
 
 .request-state {

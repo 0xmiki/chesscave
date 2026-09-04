@@ -5,6 +5,12 @@
   import ChessBoard from "$lib/components/ChessBoard.svelte";
   import CoachSidebar from "$lib/components/CoachSidebar.svelte";
   import { requestsDrillCreation } from "$lib/chat/coach-actions";
+  import {
+    appendCoachDeltas,
+    coachEventTurnId,
+    restoreCoachMessages,
+    shouldAcceptCoachTurnEvent,
+  } from "$lib/chat/sidebar";
   import EvaluationBar from "$lib/components/EvaluationBar.svelte";
   import GameSummary from "$lib/components/GameSummary.svelte";
   import MoveList from "$lib/components/MoveList.svelte";
@@ -68,6 +74,7 @@
     getCoachConnectionStatus,
     getEngineStatus,
     hasNativeHost,
+    interruptCoachTurn,
     newCoachThread,
     onCoachEvent,
     onReviewProgress,
@@ -107,13 +114,18 @@
     hasNativeHost() ? "Starting Codex app-server…" : "Desktop preview required",
   );
   let coachMessages = $state<CoachMessage[]>([]);
+  let coachDraft = $state("");
   let coachActivity = $state<CoachActivity | null>(null);
   let activeCoachTools = $state<Record<string, string>>({});
   let activeCoachRequestId = $state<string | null>(null);
+  let activeCoachTurnId = $state<string | null>(null);
+  let coachStopPending = $state(false);
   let queuedCoachRetryId: string | null = null;
   let coachStartAttempts = 0;
   let coachStartupTimer: number | null = null;
   let coachRequestTimer: number | null = null;
+  let coachDeltaFrame: number | null = null;
+  const pendingCoachDeltas = new Map<string, string>();
   let importOpen = $state(false);
   let pgnDraft = $state("");
   let importError = $state("");
@@ -398,6 +410,32 @@
     );
   });
 
+  $effect(() => {
+    if (!storageReady || typeof localStorage === "undefined") return;
+    localStorage.setItem("chesscave.coach-draft.v1", coachDraft);
+  });
+
+  function flushCoachDeltas() {
+    if (coachDeltaFrame !== null) {
+      window.cancelAnimationFrame(coachDeltaFrame);
+      coachDeltaFrame = null;
+    }
+    if (!pendingCoachDeltas.size) return;
+    coachMessages = appendCoachDeltas(coachMessages, pendingCoachDeltas);
+    pendingCoachDeltas.clear();
+  }
+
+  function queueCoachDelta(itemId: string, delta: string) {
+    if (!delta) return;
+    pendingCoachDeltas.set(
+      itemId,
+      (pendingCoachDeltas.get(itemId) ?? "") + delta,
+    );
+    if (coachDeltaFrame === null) {
+      coachDeltaFrame = window.requestAnimationFrame(flushCoachDeltas);
+    }
+  }
+
   function clearCoachStartupTimer() {
     if (coachStartupTimer !== null) window.clearTimeout(coachStartupTimer);
     coachStartupTimer = null;
@@ -410,7 +448,7 @@
 
   function updateCoachRequest(
     id: string,
-    requestStatus?: "pending" | "failed",
+    requestStatus?: "pending" | "failed" | "stopped",
     error?: string,
   ) {
     coachMessages = coachMessages.map((message) =>
@@ -423,6 +461,8 @@
       updateCoachRequest(activeCoachRequestId, "failed", error);
       activeCoachRequestId = null;
     }
+    activeCoachTurnId = null;
+    coachStopPending = false;
     clearCoachRequestTimer();
   }
 
@@ -431,7 +471,25 @@
       updateCoachRequest(activeCoachRequestId);
       activeCoachRequestId = null;
     }
+    activeCoachTurnId = null;
+    coachStopPending = false;
     clearCoachRequestTimer();
+  }
+
+  async function stopActiveCoachResponse() {
+    const turnId = activeCoachTurnId;
+    if (!turnId || coachStopPending) return;
+
+    coachStopPending = true;
+    coachDetail = "Stopping response…";
+    try {
+      await interruptCoachTurn(turnId);
+    } catch (error) {
+      if (activeCoachTurnId === turnId) {
+        coachStopPending = false;
+        coachDetail = error instanceof Error ? error.message : String(error);
+      }
+    }
   }
 
   function armCoachRequestTimer() {
@@ -530,9 +588,9 @@
     let unlistenReview: (() => void) | undefined;
 
     void (async () => {
-      try {
-        const savedStudy = localStorage.getItem(STUDY_STORAGE_KEY);
-        if (savedStudy) {
+      const savedStudy = localStorage.getItem(STUDY_STORAGE_KEY);
+      if (savedStudy) {
+        try {
           const saved = JSON.parse(savedStudy) as {
             pgn?: string;
             currentPly?: number;
@@ -547,27 +605,20 @@
               Math.min(restored.moves.length, saved.currentPly ?? restored.moves.length),
             );
           }
+        } catch {
+          localStorage.removeItem(STUDY_STORAGE_KEY);
         }
+      }
 
-        const savedMessages = localStorage.getItem("chesscave.coach-messages.v1");
-        if (savedMessages) {
-          const restored = JSON.parse(savedMessages) as CoachMessage[];
-          coachMessages = restored.map((message) => ({
-            ...message,
-            pending: false,
-            requestStatus:
-              message.requestStatus === "pending" ? "failed" : message.requestStatus,
-            error:
-              message.requestStatus === "pending"
-                ? "ChessCave closed before this request finished."
-                : message.error,
-          }));
-        }
+      try {
+        coachMessages = restoreCoachMessages(
+          localStorage.getItem("chesscave.coach-messages.v1"),
+        );
       } catch {
-        localStorage.removeItem(STUDY_STORAGE_KEY);
         localStorage.removeItem("chesscave.coach-messages.v1");
       }
       storageReady = true;
+      coachDraft = localStorage.getItem("chesscave.coach-draft.v1") ?? "";
       playerUsername =
         localStorage.getItem(CHESSCOM_USERNAME_STORAGE_KEY) ?? "";
 
@@ -594,6 +645,13 @@
     })();
 
     return () => {
+      flushCoachDeltas();
+      if (storageReady) {
+        localStorage.setItem(
+          "chesscave.coach-messages.v1",
+          JSON.stringify(coachMessages.slice(-40)),
+        );
+      }
       disposed = true;
       clearCoachStartupTimer();
       clearCoachRequestTimer();
@@ -927,6 +985,8 @@
     if (!request || coachStatus !== "ready") return;
 
     activeCoachRequestId = id;
+    activeCoachTurnId = null;
+    coachStopPending = false;
     updateCoachRequest(id, "pending");
     armCoachRequestTimer();
 
@@ -1246,9 +1306,12 @@
     coachDetail = "Starting a new conversation…";
     coachActivity = null;
     activeCoachTools = {};
+    activeCoachTurnId = null;
+    coachStopPending = false;
     try {
       await newCoachThread();
       coachMessages = [];
+      coachDraft = "";
     } catch (error) {
       coachStatus = "error";
       coachDetail = String(error);
@@ -1298,6 +1361,24 @@
   function handleCoachEvent(event: Record<string, unknown>) {
     const method = typeof event.method === "string" ? event.method : "";
     const params = (event.params ?? {}) as Record<string, unknown>;
+
+    if (method === "turn/started") {
+      if (!activeCoachRequestId) return;
+      activeCoachTurnId = coachEventTurnId(event);
+      coachStopPending = false;
+      return;
+    }
+
+    if (
+      !shouldAcceptCoachTurnEvent(
+        event,
+        activeCoachRequestId !== null,
+        activeCoachTurnId,
+      )
+    ) {
+      return;
+    }
+
     if (activeCoachRequestId) armCoachRequestTimer();
 
     if (event.id === 1 && event.result) {
@@ -1426,15 +1507,7 @@
       coachDetail = coachActivity.label;
       const itemId = String(params.itemId ?? params.item_id ?? "active-assistant");
       const delta = String(params.delta ?? "");
-      const existing = coachMessages.find((message) => message.id === itemId);
-      if (existing) {
-        existing.text += delta;
-      } else {
-        coachMessages = [
-          ...coachMessages,
-          { id: itemId, role: "assistant", text: delta, pending: true },
-        ];
-      }
+      queueCoachDelta(itemId, delta);
       return;
     }
 
@@ -1444,6 +1517,7 @@
         if (!patchResponse && typeof item.text === "string") patchResponse = item.text;
         return;
       }
+      if (item?.type === "agentMessage") flushCoachDeltas();
       if (item?.type === "mcpToolCall") {
         const itemId = String(item.id ?? "");
         const { [itemId]: _completed, ...remaining } = activeCoachTools;
@@ -1463,7 +1537,7 @@
         const existing = coachMessages.find((message) => message.id === itemId);
         if (existing) {
           existing.pending = false;
-          if (!existing.text && typeof item.text === "string") existing.text = item.text;
+          if (typeof item.text === "string") existing.text = item.text;
         } else if (typeof item.text === "string") {
           coachMessages = [
             ...coachMessages,
@@ -1475,19 +1549,33 @@
     }
 
     if (method === "turn/completed") {
+      flushCoachDeltas();
       const turn = (params.turn ?? {}) as Record<string, unknown>;
       const turnStatus = String(turn.status ?? params.status ?? "completed");
       if (["failed", "error", "cancelled", "canceled", "interrupted"].includes(turnStatus)) {
         const turnError = (turn.error ?? params.error ?? {}) as Record<string, unknown>;
-        const detail = String(turnError.message ?? "Sol could not finish this request.");
+        const stopped = coachStopPending &&
+          ["cancelled", "canceled", "interrupted"].includes(turnStatus);
+        const detail = stopped
+          ? "Response stopped."
+          : String(turnError.message ?? "Sol could not finish this request.");
+        coachMessages = coachMessages.map((message) =>
+          message.pending ? { ...message, pending: false } : message,
+        );
         if (patchGenerating && pendingPatchInput) {
           finishPatchGeneration();
           patchError = "Sol could not finish, so ChessCave built a verified local drill.";
+        } else if (stopped && activeCoachRequestId) {
+          updateCoachRequest(activeCoachRequestId, "stopped");
+          activeCoachRequestId = null;
+          activeCoachTurnId = null;
+          coachStopPending = false;
+          clearCoachRequestTimer();
         } else {
           failActiveCoachRequest(detail);
         }
         coachStatus = "ready";
-        coachDetail = "Request failed. You can retry it.";
+        coachDetail = stopped ? "Response stopped." : "Request failed. You can retry it.";
         coachActivity = null;
         activeCoachTools = {};
         return;
@@ -1806,6 +1894,7 @@
           </div>
         {:else if studyTab === "coach"}
           <CoachSidebar
+            bind:draft={coachDraft}
             messages={coachMessages}
             status={coachStatus}
             detail={coachDetail}
@@ -1816,6 +1905,8 @@
             onNewConversation={startNewCoachConversation}
             onRetry={retryCoach}
             onRetryMessage={retryCoachMessage}
+            onStop={stopActiveCoachResponse}
+            canStop={Boolean(activeCoachTurnId) && !coachStopPending && !patchGenerating}
           />
         {:else}
           <PatchComposer

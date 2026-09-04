@@ -133,7 +133,7 @@ export interface CoachMessage {
   text: string;
   pending?: boolean;
   requestKind?: "message" | "drill";
-  requestStatus?: "pending" | "failed";
+  requestStatus?: "pending" | "failed" | "stopped";
   error?: string;
 }
 
