@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="static/chesscave-logo.svg" width="96" alt="ChessCave logo">
+</p>
+
 ![ChessCave](docs/image.png)
 
 ChessCave is a private desktop app for playing chess, reviewing your games, and

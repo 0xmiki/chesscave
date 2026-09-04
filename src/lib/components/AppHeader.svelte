@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import IconHorseRegular from "phosphor-icons-svelte/IconHorseRegular.svelte";
 
   let {
     active,
@@ -18,7 +17,7 @@
 <header class="topbar">
   <a class="brand" href="/" aria-label="ChessCave home">
     <span class="brand-mark" aria-hidden="true">
-      <IconHorseRegular />
+      <img src="/chesscave-logo.svg" alt="" />
     </span>
     <span>ChessCave</span>
   </a>
@@ -72,16 +71,16 @@
   }
 
   .brand-mark {
-    display: grid;
+    display: block;
+    flex: 0 0 auto;
     width: 34px;
     height: 34px;
-    place-items: center;
-    border: 1px solid var(--line-strong);
-    border-radius: 50%;
-    color: var(--coral-dark);
-    background: var(--pearl-raised);
-    font-family: Georgia, serif;
-    font-size: 20px;
+  }
+
+  .brand-mark img {
+    display: block;
+    width: 100%;
+    height: 100%;
   }
 
   nav {
