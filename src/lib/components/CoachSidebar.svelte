@@ -160,7 +160,7 @@
       : status === "ready"
       ? "Ready for this position"
       : status === "thinking"
-        ? "Sol is answering"
+        ? "Codex is answering"
         : detail,
   );
   const canSend = $derived(Boolean(draft.trim()) && !busy && status === "ready");
@@ -199,7 +199,7 @@
     {#if messages.length === 0}
       <div class="welcome">
         <h3>Ask about this position.</h3>
-        <p>Sol reads the current position and Stockfish review before answering.</p>
+        <p>Codex reads the current position and Stockfish review before answering.</p>
       </div>
       <div class="suggestions">
         {#each suggested as suggestion}
@@ -244,12 +244,11 @@
             class:stopped={message.requestStatus === "stopped"}
             class="message user"
           >
-            <span class="user-label">You</span>
             <div class="bubble">{message.text}</div>
             {#if message.requestStatus === "pending"}
               <div class="request-state pending" role="status">
                 <span class="request-spinner" aria-hidden="true"></span>
-                {message.requestKind === "drill" ? "Creating drill…" : "Waiting for Sol…"}
+                {message.requestKind === "drill" ? "Creating drill…" : "Waiting for Codex…"}
               </div>
             {:else if message.requestStatus === "failed" || message.requestStatus === "stopped"}
               <div class:stopped={message.requestStatus === "stopped"} class="request-failure" role="status">
@@ -304,7 +303,7 @@
   <form
     class:error={status === "error"}
     onsubmit={(event) => { event.preventDefault(); submit(); }}
-    aria-label="Message Sol"
+    aria-label="Message Codex"
   >
     <div class="composer-row">
       <textarea
@@ -314,7 +313,7 @@
         rows="1"
         maxlength={maximumMessageLength}
         disabled={status === "offline" || status === "starting"}
-        aria-label="Ask Sol about this position"
+        aria-label="Ask Codex about this position"
         aria-describedby="coach-composer-meta"
         oninput={resizeComposer}
         onkeydown={(event) => {
@@ -328,7 +327,7 @@
         class="send"
         type="submit"
         disabled={!canSend}
-        aria-label={busy ? "Wait for Sol to finish" : "Send message"}
+        aria-label={busy ? "Wait for Codex to finish" : "Send message"}
         title="Send message"
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -534,15 +533,6 @@ p {
   display: grid;
   justify-items: end;
   gap: 5px;
-}
-
-.user-label {
-  padding-right: 3px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .user .bubble {

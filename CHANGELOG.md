@@ -5,7 +5,7 @@
 Initial desktop release.
 
 - Play against Stockfish or move both sides in self-play.
-- Enable optional Sol commentary during a game.
+- Ask Codex for commentary on the current position during a game.
 - Review Chess.com games and imported PGNs with Stockfish.
 - Compare moves, inspect engine lines, and explore legal variations.
 - Turn mistakes into scheduled drills.

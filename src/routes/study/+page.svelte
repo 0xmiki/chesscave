@@ -492,7 +492,7 @@
     if (!activeCoachRequestId) return;
     coachRequestTimer = window.setTimeout(() => {
       coachRequestTimer = null;
-      const detail = "Sol did not respond in time. Retry this request.";
+      const detail = "Codex did not respond in time. Retry this request.";
       failActiveCoachRequest(detail);
       coachStatus = "error";
       coachDetail = detail;
@@ -954,7 +954,7 @@
       : currentPly;
     const recentConversation = coachMessages
       .slice(-6)
-      .map((item) => `${item.role === "user" ? playerUsername || "Student" : "Sol"}: ${item.text}`)
+      .map((item) => `${item.role === "user" ? playerUsername || "Student" : "Codex"}: ${item.text}`)
       .join("\n");
     return [
       `Game: ${game.headers.White || "White"} vs ${game.headers.Black || "Black"}`,
@@ -1044,11 +1044,11 @@
     }
 
     coachStatus = "thinking";
-    coachDetail = "Sol is studying the position…";
+    coachDetail = "Codex is studying the position…";
     coachActivity = {
       kind: "thinking",
       label: "Considering your question",
-      detail: "Sol is deciding what evidence to inspect.",
+      detail: "Codex is deciding what evidence to inspect.",
     };
     try {
       await sendCoachMessage(request.text, coachContext());
@@ -1258,7 +1258,7 @@
       coachActivity = {
         kind: "thinking",
         label: "Writing the drill",
-        detail: "Sol is writing a drill for this position.",
+        detail: "Codex is writing a drill for this position.",
       };
       const prompt = [
         "Create one concise chess flashcard from the student's diagnosis.",
@@ -1269,8 +1269,9 @@
         "Return JSON only with exactly these string fields: mistake, prompt, explanation, principle.",
         "The mistake field must be a concise first-person account of what the student got wrong, inferred from their statement and the verified position. Do not copy conversation labels, assistant notices, or phrases such as 'from the coaching discussion'.",
         "The prompt must ask the student to find a move without revealing it.",
-        "The explanation must connect the student's mistake to the verified correction.",
-        "The principle must be a short reusable thinking rule, not a slogan.",
+        "The explanation must connect the mistake to the verified move in one plain sentence. Name the relevant pieces or squares. Do not use motivational language, filler, or generic advice.",
+        "The principle must be one concrete instruction of at most 15 words. Do not write a slogan or use vague phrases such as 'stay alert', 'play actively', or 'improve your position'.",
+        "Use short sentences and common words. Do not repeat the same point across fields.",
         `Student's mistake: ${mistake.trim()}`,
         `Student's proposed correction: ${correction.trim()}`,
         `Verified move: ${acceptedMove.san} (${acceptedMove.uci})`,
@@ -1528,7 +1529,7 @@
         coachActivity = {
           kind: "replying",
           label: "Writing a response",
-          detail: "Sol is writing an answer.",
+          detail: "Codex is writing an answer.",
         };
         coachDetail = coachActivity.label;
         const messageId = String(item.id ?? crypto.randomUUID());
@@ -1576,7 +1577,7 @@
           : {
               kind: "thinking",
               label: "Reviewing the tool result",
-              detail: "Sol is reading the Stockfish result.",
+              detail: "Codex is reading the Stockfish result.",
             };
         coachDetail = coachActivity.label;
       }
@@ -1606,13 +1607,13 @@
           ["cancelled", "canceled", "interrupted"].includes(turnStatus);
         const detail = stopped
           ? "Response stopped."
-          : String(turnError.message ?? "Sol could not finish this request.");
+          : String(turnError.message ?? "Codex could not finish this request.");
         coachMessages = coachMessages.map((message) =>
           message.pending ? { ...message, pending: false } : message,
         );
         if (patchGenerating && pendingPatchInput) {
           finishPatchGeneration();
-          patchError = "Sol could not finish, so ChessCave built a verified local drill.";
+          patchError = "Codex could not finish, so ChessCave built a verified local drill.";
         } else if (stopped && activeCoachRequestId) {
           updateCoachRequest(activeCoachRequestId, "stopped");
           activeCoachRequestId = null;
@@ -2010,7 +2011,7 @@
         </div>
         <button type="button" aria-label="Close import dialog" onclick={closeImportDialog}>×</button>
       </div>
-      <p>Paste a complete PGN. ChessCave will load every move for Stockfish and Sol.</p>
+      <p>Paste a complete PGN. ChessCave will load every move for Stockfish and Codex.</p>
       <textarea bind:this={importTextarea} bind:value={pgnDraft} rows="13" placeholder={'[Event "My game"]\n\n1. e4 e5 2. Nf3 …'}></textarea>
       {#if importError}<div class="import-error">{importError}</div>{/if}
       <div class="modal-actions">

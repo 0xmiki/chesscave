@@ -74,6 +74,7 @@
   let previewArrow = $state<BoardArrow | null>(null);
   let keyboardSquare = $state<string | null>(null);
   let pieceDrag = $state<PieceDrag | null>(null);
+  let pendingPointerDrop: { from: string; to: string } | null = null;
   let suppressDragClick = false;
 
   const files = $derived(flipped ? ["h", "g", "f", "e", "d", "c", "b", "a"] : ["a", "b", "c", "d", "e", "f", "g", "h"]);
@@ -88,17 +89,23 @@
     k: "king",
   };
   const boardLabel = $derived(
-    `Chess board. ${position.turn() === "w" ? "White" : "Black"} to move${position.inCheck() ? " and in check" : ""}. Use arrow keys to move between squares.`,
+    `Chess board. ${position.turn() === "w" ? "White" : "Black"} to move${position.inCheck() ? " and in check" : ""}. Use Shift and the arrow keys to move between squares.`,
   );
 
   $effect(() => {
     const target = piecesFromFen(fen);
     const previous = untrack(() => visualPieces);
     const fromRects = capturePieceRects(previous);
+    const droppedPieceId = pointerDroppedPieceId(
+      previous,
+      target,
+      pendingPointerDrop,
+    );
+    pendingPointerDrop = null;
     const next = reconcilePieces(previous, target, lastMove);
     visualPieces = next;
     const cycle = ++motionCycle;
-    void animateMovedPieces(previous, next, fromRects, cycle);
+    void animateMovedPieces(previous, next, fromRects, cycle, droppedPieceId);
   });
 
   $effect(() => {
@@ -139,6 +146,7 @@
     next: VisualPiece[],
     fromRects: Map<string, { left: number; top: number }>,
     cycle: number,
+    skippedPieceId: string | null,
   ) {
     if (compact || !previous.length || matchMedia("(prefers-reduced-motion: reduce)").matches) {
       return;
@@ -148,6 +156,7 @@
 
     const previousById = new Map(previous.map((piece) => [piece.id, piece]));
     for (const piece of next) {
+      if (piece.id === skippedPieceId) continue;
       const origin = previousById.get(piece.id);
       if (!origin || origin.square === piece.square) continue;
       const pieceElementAtDestination = pieceElement(piece.id);
@@ -189,6 +198,23 @@
     }
 
     return pieces;
+  }
+
+  function pointerDroppedPieceId(
+    previous: VisualPiece[],
+    target: Omit<VisualPiece, "id">[],
+    drop: { from: string; to: string } | null,
+  ): string | null {
+    if (!drop) return null;
+    const origin = previous.find((piece) => piece.square === drop.from);
+    const destination = target.find((piece) => piece.square === drop.to);
+    if (!origin || !destination || origin.color !== destination.color) return null;
+
+    const promoted =
+      origin.type === "p" &&
+      destination.type !== "p" &&
+      (drop.to.endsWith("1") || drop.to.endsWith("8"));
+    return origin.type === destination.type || promoted ? origin.id : null;
   }
 
   function distance(a: string, b: string): number {
@@ -383,7 +409,14 @@
         event.preventDefault();
         const to = pointerSquare(event);
         suppressDragClick = true;
-        if (to && to !== completed.from) onSquareClick(to);
+        if (to && to !== completed.from) {
+          const drop = { from: completed.from, to };
+          pendingPointerDrop = drop;
+          onSquareClick(to);
+          void tick().then(() => {
+            if (pendingPointerDrop === drop) pendingPointerDrop = null;
+          });
+        }
         window.setTimeout(() => {
           suppressDragClick = false;
         }, 0);
@@ -470,13 +503,10 @@
   }
 
   function handleSquareKeydown(event: KeyboardEvent, square: string) {
-    if (
-      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(
-        event.key,
-      )
-    ) {
-      return;
-    }
+    const arrow = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
+      event.key,
+    );
+    if ((!arrow || !event.shiftKey) && !["Home", "End"].includes(event.key)) return;
     event.preventDefault();
     focusSquare(nextBoardSquare(files, ranks, square, event.key as BoardArrowKey));
   }
@@ -494,7 +524,6 @@
   aria-label={compact ? "Saved chess position" : boardLabel}
   aria-rowcount={compact ? undefined : 8}
   aria-colcount={compact ? undefined : 8}
-  title={compact ? undefined : "Right-drag to draw · Shift green · Ctrl red · Alt blue · left-click to clear"}
   bind:this={boardElement}
   onpointerdown={handlePointerDown}
   onpointermove={handlePointerMove}

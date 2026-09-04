@@ -465,7 +465,7 @@ editor.
 - Render a compact local board preview using existing ChessCave piece artwork.
 - Open the referenced game/ply when the original local study still exists;
   otherwise show the preserved snapshot honestly.
-- Make position blocks readable by Sol only through an explicit, read-only
+- Make position blocks readable by Codex only through an explicit, read-only
   Notes MCP contract introduced in this milestone.
 
 **Exit gate**

@@ -13,7 +13,7 @@
   import AppHeader from "$lib/components/AppHeader.svelte";
   import EvaluationBar from "$lib/components/EvaluationBar.svelte";
   import MoveBadge from "$lib/components/MoveBadge.svelte";
-  import { bestAlternativeArrow, uciToArrow } from "$lib/chess/arrows";
+  import { uciToArrow } from "$lib/chess/arrows";
   import {
     CODEX_COMPARE_TIME_MS,
     CODEX_MOVE_TIME_MS,
@@ -64,13 +64,20 @@
     move: CodexPlayMove;
     comparison: MoveComparison;
   };
-  type PendingExplanation = {
+  type PendingPositionCommentary = {
     session: number;
-    before: string;
-    move: CodexPlayMove;
-    analysis: AnalysisResult | null;
+    fen: string;
+    ply: number;
+    context: string;
+  };
+  type PositionCommentary = {
+    fen: string;
+    text: string;
+    state: "preparing" | "queued" | "thinking" | "complete" | "error";
+  };
+  type PositionContext = {
+    analysis: AnalysisResult;
     opening: OpeningMatch | null;
-    playerFeedback?: LiveFeedback | null;
   };
   type LiveFeedback = {
     move: CodexPlayMove;
@@ -78,10 +85,11 @@
     classification: MoveClassification;
   };
   type ActiveCoachRequest = {
-    purpose: "idea" | "move";
+    purpose: "idea" | "position";
     session: number;
     movePly: number;
     ideaTurnId?: number;
+    fen?: string;
   };
   type IdeaTurn = {
     id: number;
@@ -96,19 +104,12 @@
     question: string;
     context: string;
   };
-  type CoachNote = {
-    heading: string;
-    label: string;
-    text: string;
-  };
-
   const initialFen = new Chess().fen();
   let liveFen = $state(initialFen);
   let reflectionFen = $state<string | null>(null);
   let lastMove = $state<{ from: string; to: string } | null>(null);
   let playerSide = $state<Side>("w");
   let playMode = $state<PlayMode>("codex");
-  let solEnabled = $state(false);
   let gameStarted = $state(false);
   let historyPly = $state<number | null>(null);
   let flipped = $state(false);
@@ -117,8 +118,7 @@
   let phase = $state<Phase>(hasNativeHost() ? "ready" : "offline");
   let engineName = $state("Stockfish");
   let statusText = $state(hasNativeHost() ? "Your move" : "Desktop app required for Stockfish");
-  let latestAnalysis = $state<AnalysisResult | null>(null);
-  let selfPlayAnalysis = $state<AnalysisResult | null>(null);
+  let positionAnalysis = $state<AnalysisResult | null>(null);
   let latestFeedback = $state<LiveFeedback | null>(null);
   let insight = $state<Insight | null>(null);
   let ideaDraft = $state("");
@@ -134,10 +134,12 @@
   let activeMessageId = $state("");
   let activeTurnId = $state("");
   let activeCoachRequest = $state<ActiveCoachRequest | null>(null);
-  let activeExplanation = $state<PendingExplanation | null>(null);
-  let explanationQueue = $state<PendingExplanation[]>([]);
-  let coachNotes = $state<Record<number, CoachNote>>({});
+  let activePositionCommentary = $state<PendingPositionCommentary | null>(null);
+  let positionCommentaryQueue = $state<PendingPositionCommentary[]>([]);
+  let positionCommentary = $state<PositionCommentary | null>(null);
   let coachingAids = $state(true);
+  let showBestMoves = $state(true);
+  let coachRequested = false;
   let coachRestartTimer: number | null = null;
   let coachReadyTimer: number | null = null;
   let coachStartAttempts = 0;
@@ -177,14 +179,10 @@
   });
   const engineArrow = $derived.by(() => {
     if (reflectionFen) return uciToArrow(insight?.comparison.analysis.bestMove);
-    if (historyPly !== null || !coachingAids) return null;
-    if (playMode === "self") return uciToArrow(selfPlayAnalysis?.bestMove);
-    if (!latestFeedback) return null;
-    return bestAlternativeArrow(
-      latestFeedback.move.uci,
-      latestFeedback.comparison.analysis.bestMove,
-      latestFeedback.classification === "book",
-    );
+    if (historyPly !== null || !coachingAids || !showBestMoves) return null;
+    return positionAnalysis?.fen === liveFen
+      ? uciToArrow(positionAnalysis.bestMove)
+      : null;
   });
   const snapshots = $derived([
     { fen: initialFen, ply: 0, lastMove: null, clocks: { w: null, b: null } },
@@ -201,18 +199,18 @@
       ? insight?.comparison.analysis ?? null
       : historyPly !== null
         ? null
-        : playMode === "self"
-          ? selfPlayAnalysis
-          : latestAnalysis,
+        : positionAnalysis?.fen === liveFen
+          ? positionAnalysis
+          : null,
   );
   const evaluationLine = $derived(
     reflectionFen
       ? insight?.comparison.analysis.lines[0] ?? null
       : historyPly !== null
         ? null
-        : playMode === "self"
-          ? selfPlayAnalysis?.lines[0] ?? null
-          : latestFeedback?.comparison.playedLine ?? latestAnalysis?.lines[0] ?? null,
+        : positionAnalysis?.fen === liveFen
+          ? positionAnalysis.lines[0] ?? null
+          : null,
   );
   const principalLine = $derived(
     lineToSan(activeAnalysis?.fen ?? liveFen, activeAnalysis?.lines[0] ?? null),
@@ -225,9 +223,6 @@
   );
   const topSide = $derived<Side>(flipped ? "w" : "b");
   const bottomSide = $derived<Side>(flipped ? "b" : "w");
-  const latestCoachNote = $derived(
-    latestCodexMove ? coachNotes[latestCodexMove.ply] ?? null : null,
-  );
   const feedbackBestMove = $derived(
     latestFeedback
       ? lineToSan(
@@ -240,9 +235,6 @@
     historyPly === null && coachingAids && latestFeedback && moves.at(-1)?.ply === latestFeedback.move.ply
       ? latestFeedback.classification
       : null,
-  );
-  const historyCoachNote = $derived(
-    historyMove ? coachNotes[historyMove.ply] ?? null : null,
   );
   const historyOpening = $derived(
     historyPly !== null ? openingAt(openingBook, snapshots, historyPly) : null,
@@ -278,7 +270,7 @@
   }
 
   function scheduleCoachRestart() {
-    if (!solEnabled || !hasNativeHost() || coachRestartTimer !== null) return;
+    if (!coachRequested || !hasNativeHost() || coachRestartTimer !== null) return;
     if (coachStartAttempts >= 3) {
       coachUnavailable = true;
       for (const pending of ideaQueue) {
@@ -288,16 +280,14 @@
         });
       }
       ideaQueue = [];
-      if (latestCodexMove) {
-        coachNotes = {
-          ...coachNotes,
-          [latestCodexMove.ply]: {
-            heading: latestCodexMove.san,
-            label: "Stockfish coaching",
-            text: "Codex commentary is unavailable. Stockfish's coaching aids remain active.",
-          },
+      if (positionCommentary?.state !== "complete") {
+        positionCommentary = {
+          fen: positionCommentary?.fen ?? liveFen,
+          text: "Codex is unavailable. Stockfish analysis is still available on the board.",
+          state: "error",
         };
       }
+      positionCommentaryQueue = [];
       return;
     }
     coachRestartTimer = window.setTimeout(() => {
@@ -307,7 +297,7 @@
   }
 
   async function startCoachReliably(restart = false) {
-    if (!solEnabled || !hasNativeHost()) return;
+    if (!coachRequested || !hasNativeHost()) return;
     coachUnavailable = false;
     coachStartAttempts += 1;
     try {
@@ -347,10 +337,10 @@
         liveFen?: string;
         playerSide?: Side;
         playMode?: PlayMode;
-        solEnabled?: boolean;
         moves?: CodexPlayMove[];
         note?: string;
         coachingAids?: boolean;
+        showBestMoves?: boolean;
         openingSeed?: number;
       } | null;
       if (saved?.liveFen && saved.moves) {
@@ -358,12 +348,11 @@
         moves = saved.moves;
         playerSide = saved.playerSide ?? "w";
         playMode = saved.playMode ?? "codex";
-        solEnabled = saved.solEnabled ?? false;
-        if (playMode === "self") solEnabled = false;
         flipped = playerSide === "b";
         note = saved.note ?? "Game restored.";
         noteLabel = "Welcome back";
         coachingAids = saved.coachingAids ?? true;
+        showBestMoves = saved.showBestMoves ?? true;
         gameStarted = saved.moves.length > 0;
         openingSeed = saved.openingSeed ?? openingRotation;
       }
@@ -385,17 +374,17 @@
       }
       engineName = engine.name ?? "Stockfish";
       unlisten = await onCoachEvent(handleCoachEvent);
-      if (solEnabled) await startCoachReliably();
       if (!gameStarted) {
         phase = "ready";
         statusText = "Set up your session";
       } else if (playMode === "self") {
         phase = "ready";
         statusText = `${game.turn() === "w" ? "White" : "Black"} to move`;
-        void requestSelfPlayAnalysis(liveFen, gameSession);
+        void requestPositionAnalysis(liveFen, gameSession);
       } else if (game.turn() === playerSide) {
         phase = "ready";
         statusText = "Your move";
+        void requestPositionAnalysis(liveFen, gameSession);
       } else void makeCodexMove(++turnToken);
     })();
 
@@ -415,10 +404,10 @@
         liveFen,
         playerSide,
         playMode,
-        solEnabled,
         moves,
         note,
         coachingAids,
+        showBestMoves,
         openingSeed,
       }),
     );
@@ -452,24 +441,97 @@
     void playPlayerMove(from, square);
   }
 
-  async function requestSelfPlayAnalysis(fen: string, session: number) {
-    if (!coachingAids || playMode !== "self" || !hasNativeHost()) {
-      selfPlayAnalysis = null;
-      return;
+  async function requestPositionAnalysis(
+    fen: string,
+    session: number,
+    force = false,
+  ): Promise<AnalysisResult | null> {
+    if ((!coachingAids && !force) || !hasNativeHost()) {
+      positionAnalysis = null;
+      return null;
     }
+    if (positionAnalysis?.fen === fen) return positionAnalysis;
     try {
       const analysis = await analyzePosition(fen, 16, 1, CODEX_COMPARE_TIME_MS);
       if (
+        coachingAids &&
         session === gameSession &&
-        playMode === "self" &&
         liveFen === fen &&
         historyPly === null
       ) {
-        selfPlayAnalysis = analysis;
+        positionAnalysis = analysis;
       }
+      return analysis;
     } catch {
-      if (session === gameSession && liveFen === fen) selfPlayAnalysis = null;
+      if (session === gameSession && liveFen === fen) positionAnalysis = null;
+      return null;
     }
+  }
+
+  async function positionContext(
+    fen: string,
+    session: number,
+  ): Promise<PositionContext | null> {
+    const analysis = await requestPositionAnalysis(fen, session, true);
+    if (!analysis || session !== gameSession || liveFen !== fen) return null;
+    return {
+      analysis,
+      opening: openingAt(openingBook, snapshots, moves.length),
+    };
+  }
+
+  async function askCodexAboutPosition() {
+    if (
+      !gameStarted ||
+      phase !== "ready" ||
+      reflectionFen ||
+      historyPly !== null ||
+      coachBusy ||
+      positionCommentary?.state === "preparing" ||
+      positionCommentary?.state === "queued" ||
+      positionCommentary?.state === "thinking"
+    ) {
+      return;
+    }
+
+    const fen = liveFen;
+    const session = gameSession;
+    const ply = moves.length;
+    positionCommentary = { fen, text: "", state: "preparing" };
+    const prepared = await positionContext(fen, session);
+    if (!prepared || liveFen !== fen || session !== gameSession) {
+      if (positionCommentary?.fen === fen) {
+        positionCommentary = {
+          fen,
+          text: "Stockfish could not analyze this position.",
+          state: "error",
+        };
+      }
+      return;
+    }
+
+    const context = codexPositionContext({
+      fen,
+      playerSide: playMode === "self" ? new Chess(fen).turn() : playerSide,
+      opening: prepared.opening?.name ?? null,
+      history: moves.slice(-8),
+      analysis: prepared.analysis,
+    });
+    const pending: PendingPositionCommentary = {
+      session,
+      fen,
+      ply,
+      context,
+    };
+    positionCommentary = { fen, text: "", state: "queued" };
+    positionCommentaryQueue = [pending];
+    coachRequested = true;
+    if (coachUnavailable) {
+      coachUnavailable = false;
+      coachStartAttempts = 0;
+    }
+    if (codexReady) drainCoachQueue();
+    else void startCoachReliably();
   }
 
   async function playPlayerMove(from: string, to: string) {
@@ -490,7 +552,8 @@
     ideaDraft = "";
     latestFeedback = null;
     insight = null;
-    selfPlayAnalysis = null;
+    positionAnalysis = null;
+    positionCommentary = null;
 
     const bookMove = exactOpening(openingBook, record.after, record.ply);
     const session = gameSession;
@@ -522,8 +585,7 @@
 
     if (new Chess(liveFen).isGameOver()) {
       finishGame();
-      const feedback = await comparisonPromise;
-      if (feedback) queuePlayerOnlyNote(feedback, bookMove);
+      await comparisonPromise;
       return;
     }
 
@@ -532,24 +594,16 @@
       statusText = `${chess.turn() === "w" ? "White" : "Black"} to move`;
       noteLabel = "Self play";
       note = `${record.san}. ${chess.turn() === "w" ? "White" : "Black"} to move.`;
-      void requestSelfPlayAnalysis(record.after, session);
+      void requestPositionAnalysis(record.after, session);
       await comparisonPromise;
       return;
     }
 
-    const explanation = await makeCodexMove(token, false);
-    const feedback = await comparisonPromise;
-    if (solEnabled && explanation?.session === gameSession) {
-      const combined = { ...explanation, playerFeedback: feedback };
-      prepareCoachNote(combined);
-      queueMoveNote(combined);
-    }
+    await makeCodexMove(token);
+    await comparisonPromise;
   }
 
-  async function makeCodexMove(
-    token: number,
-    explain = true,
-  ): Promise<PendingExplanation | null> {
+  async function makeCodexMove(token: number): Promise<void> {
     selected = null;
     phase = "opponent-thinking";
     statusText = "Codex is thinking";
@@ -580,35 +634,28 @@
         );
         uci = analysis.bestMove;
       }
-      if (token !== turnToken || !uci) return null;
+      if (token !== turnToken || !uci) return;
       const played = playUci(before, uci);
       if (!played) throw new Error("Stockfish returned an unplayable move.");
       const record = moveRecord(played, moves.length + 1);
       liveFen = record.after;
       moves = [...moves, record];
       lastMove = { from: played.from, to: played.to };
-      latestAnalysis = analysis;
       noteLabel = opening?.name ?? currentOpening?.name ?? "Codex's move";
       note = analysis
         ? `${record.san}. Stockfish considered for ${(analysis.elapsedMs / 1_000).toFixed(1)} seconds.`
         : `${record.san} continues ${opening?.name ?? "the opening"} without an engine search.`;
-      const explanation = { session: gameSession, before, move: record, analysis, opening };
-      if (solEnabled) {
-        prepareCoachNote(explanation);
-        if (explain) queueMoveNote(explanation);
-      }
       if (new Chess(liveFen).isGameOver()) {
         finishGame();
-        return explanation;
+        return;
       }
       phase = "ready";
       statusText = "Your move";
-      return explanation;
+      void requestPositionAnalysis(record.after, gameSession);
     } catch (error) {
-      if (token !== turnToken) return null;
+      if (token !== turnToken) return;
       phase = "offline";
       statusText = error instanceof Error ? error.message : String(error);
-      return null;
     }
   }
 
@@ -691,7 +738,7 @@
 
   function askAboutMove(question = ideaDraft) {
     const idea = question.trim();
-    if (!solEnabled || !idea || !insight || ideaInFlight) return;
+    if (!idea || !insight || ideaInFlight) return;
     const movePly = insight.move.ply;
     const turnId = nextIdeaTurnId++;
     const existing = ideaThreads[movePly] ?? [];
@@ -721,23 +768,18 @@
       ...ideaThreads,
       [movePly]: [
         ...existing,
-        coachUnavailable
-          ? {
-              id: turnId,
-              question: idea,
-              reply: "Codex commentary is unavailable. The board still shows Stockfish's preferred move and evaluation.",
-              state: "error",
-            }
-          : { id: turnId, question: idea, reply: "", state: "queued" },
+        { id: turnId, question: idea, reply: "", state: "queued" },
       ],
     };
+    coachRequested = true;
     if (coachUnavailable) {
-      ideaDraft = "";
-      return;
+      coachUnavailable = false;
+      coachStartAttempts = 0;
     }
     ideaQueue = [...ideaQueue, pending];
     ideaDraft = "";
-    drainCoachQueue();
+    if (codexReady) drainCoachQueue();
+    else void startCoachReliably();
   }
 
   function handleIdeaKeydown(event: KeyboardEvent) {
@@ -777,50 +819,8 @@
     }
   }
 
-  function prepareCoachNote(explanation: PendingExplanation) {
-    const feedback = explanation.playerFeedback;
-    const heading = feedback
-      ? explanation.move.side === playerSide
-        ? feedback.move.san
-        : `${feedback.move.san} · ${explanation.move.san}`
-      : explanation.move.san;
-    const label = feedback
-      ? `${classificationLabel(feedback.classification)} after ${feedback.move.san}`
-      : explanation.opening?.name ?? "Codex's move";
-    const text = feedback
-      ? `Sol is comparing ${feedback.move.san} with Stockfish's preferred plan. Keep playing.`
-      : explanation.analysis
-        ? "Sol is explaining Stockfish's move. Keep playing."
-        : `Sol is explaining why ${explanation.move.san} belongs in ${explanation.opening?.name ?? "this opening"}. Keep playing.`;
-    coachNotes = {
-      ...coachNotes,
-      [explanation.move.ply]: { heading, label, text },
-    };
-  }
-
-  function queuePlayerOnlyNote(feedback: LiveFeedback, opening: OpeningMatch | null) {
-    const explanation: PendingExplanation = {
-      session: gameSession,
-      before: feedback.move.before,
-      move: feedback.move,
-      analysis: feedback.comparison.analysis,
-      opening,
-      playerFeedback: feedback,
-    };
-    prepareCoachNote(explanation);
-    queueMoveNote(explanation);
-  }
-
-  function queueMoveNote(explanation: PendingExplanation) {
-    if (!solEnabled || explanation.session !== gameSession) return;
-    if (!explanationQueue.some((queued) => queued.move.ply === explanation.move.ply)) {
-      explanationQueue = [...explanationQueue, explanation];
-    }
-    drainCoachQueue();
-  }
-
   function drainCoachQueue() {
-    if (!solEnabled || !codexReady || coachBusy) return;
+    if (!coachRequested || !codexReady || coachBusy) return;
     const [idea, ...remainingIdeas] = ideaQueue;
     if (idea) {
       ideaQueue = remainingIdeas;
@@ -828,60 +828,49 @@
       else drainCoachQueue();
       return;
     }
-    const [explanation, ...remainingExplanations] = explanationQueue;
-    if (explanation) {
-      explanationQueue = remainingExplanations;
-      if (explanation.session === gameSession) void requestMoveNote(explanation);
+    const [commentary, ...remainingCommentary] = positionCommentaryQueue;
+    if (commentary) {
+      positionCommentaryQueue = remainingCommentary;
+      if (commentary.session === gameSession && commentary.fen === liveFen) {
+        void requestPositionCommentary(commentary);
+      }
       else drainCoachQueue();
     }
   }
 
-  async function requestMoveNote(explanation: PendingExplanation) {
-    if (explanation.session !== gameSession) return;
+  async function requestPositionCommentary(
+    commentary: PendingPositionCommentary,
+  ) {
+    if (commentary.session !== gameSession || commentary.fen !== liveFen) return;
     coachBusy = true;
     codexReply = "";
     activeCoachRequest = {
-      purpose: "move",
-      session: explanation.session,
-      movePly: explanation.move.ply,
+      purpose: "position",
+      session: commentary.session,
+      movePly: commentary.ply,
+      fen: commentary.fen,
     };
-    activeExplanation = explanation;
-    const context = codexPositionContext({
-      fen: explanation.playerFeedback?.move.before ?? explanation.before,
-      playerSide,
-      opening: explanation.opening?.name ?? currentOpening?.name ?? null,
-      history: moves.slice(-8),
-      analysis: explanation.playerFeedback?.comparison.analysis ?? explanation.analysis,
-      comparison: explanation.playerFeedback?.comparison,
-      classification: explanation.playerFeedback?.classification,
-      playerMove: explanation.playerFeedback?.move,
-      codexMove: explanation.move.side === playerSide ? null : explanation.move,
-    });
-    const feedback = explanation.playerFeedback;
-    const preferredMove = feedback
-      ? lineToSan(
-          feedback.move.before,
-          feedback.comparison.analysis.lines[0] ?? null,
-        )[0] ?? feedback.comparison.analysis.bestMove ?? "another move"
-      : "";
-    const prompt = feedback
-      ? explanation.move.side === playerSide
-        ? `The player just played ${feedback.move.san}, classified ${feedback.classification}. In at most 70 words, explain what the move tries to do, its concrete merit or drawback, and why Stockfish preferred ${preferredMove}. Describe the preferred move as a plan, not merely notation. Plain prose only.`
-        : `Coach this full turn in at most 80 words. The player chose ${feedback.move.san}, classified ${feedback.classification}; Stockfish preferred ${preferredMove}; then you replied ${explanation.move.san}. Lead with the player's idea, explain the concrete merit or drawback, explain why Stockfish's preferred move and line fit the position, then briefly connect your reply. Plain prose only.`
-      : `You just played ${explanation.move.san}. In at most 45 words, explain the move's idea and what it changes. Mention ${explanation.opening?.name ?? "the opening"} only if useful. Plain prose only.`;
+    activePositionCommentary = commentary;
+    if (positionCommentary?.fen === commentary.fen) {
+      positionCommentary = { ...positionCommentary, state: "thinking" };
+    }
     try {
       await sendCoachMessage(
-        prompt,
-        context,
+        "Give one useful insight about the current position in at most 80 words. Explain what matters now, the best practical plan, and the main tactical or positional danger. Use the supplied Stockfish analysis as evidence. Do not recap every move. Plain prose only.",
+        commentary.context,
         "live",
       );
     } catch {
       coachBusy = false;
       activeCoachRequest = null;
-      activeExplanation = null;
+      activePositionCommentary = null;
       codexReady = false;
-      if (explanation.session === gameSession) {
-        explanationQueue = [explanation, ...explanationQueue];
+      if (commentary.session === gameSession && commentary.fen === liveFen) {
+        positionCommentary = {
+          fen: commentary.fen,
+          text: "Codex could not answer. Try again.",
+          state: "error",
+        };
       }
       scheduleCoachRestart();
     }
@@ -890,13 +879,9 @@
   function publishCoachReply(request: ActiveCoachRequest | null, text: string) {
     const reply = text.trim();
     if (!request || request.session !== gameSession || !reply) return;
-    if (request.purpose === "move") {
-      const existing = coachNotes[request.movePly];
-      if (existing) {
-        coachNotes = {
-          ...coachNotes,
-          [request.movePly]: { ...existing, text: reply },
-        };
+    if (request.purpose === "position" && request.fen) {
+      if (positionCommentary?.fen === request.fen) {
+        positionCommentary = { ...positionCommentary, text: reply };
       }
     } else if (request.ideaTurnId !== undefined) {
       updateIdeaTurn(request.movePly, request.ideaTurnId, { reply });
@@ -904,7 +889,7 @@
   }
 
   function handleCoachEvent(event: Record<string, unknown>) {
-    if (!solEnabled) return;
+    if (!coachRequested) return;
     const method = typeof event.method === "string" ? event.method : "";
     const params = (event.params ?? {}) as Record<string, unknown>;
     if ((event.id === 1 && event.result) || method === "chesscave/ready") {
@@ -953,33 +938,51 @@
             ? { state: "complete" }
             : { reply: "Codex finished without an answer. The engine comparison remains available above.", state: "error" },
         );
+      } else if (
+        activeCoachRequest?.purpose === "position" &&
+        activeCoachRequest.fen &&
+        positionCommentary?.fen === activeCoachRequest.fen
+      ) {
+        positionCommentary = codexReply.trim()
+          ? { ...positionCommentary, text: codexReply.trim(), state: "complete" }
+          : {
+              ...positionCommentary,
+              text: "Codex finished without an answer. Try again.",
+              state: "error",
+            };
       }
       activeMessageId = "";
       activeTurnId = "";
       activeCoachRequest = null;
-      activeExplanation = null;
+      activePositionCommentary = null;
       activeIdea = null;
       coachBusy = false;
       drainCoachQueue();
       return;
     }
     if (method === "chesscave/error") {
-      const interrupted = activeExplanation;
-      if (interrupted?.session === gameSession) {
-        explanationQueue = [interrupted, ...explanationQueue];
-      }
       if (activeIdea?.session === gameSession) {
         updateIdeaTurn(activeIdea.movePly, activeIdea.turnId, {
           reply: "Codex lost the connection before finishing this answer. The board still shows Stockfish's preferred move.",
           state: "error",
         });
       }
+      if (
+        activePositionCommentary?.session === gameSession &&
+        activePositionCommentary.fen === liveFen
+      ) {
+        positionCommentary = {
+          fen: activePositionCommentary.fen,
+          text: "Codex lost the connection. Try again.",
+          state: "error",
+        };
+      }
       codexReady = false;
       coachBusy = false;
       activeMessageId = "";
       activeTurnId = "";
       activeCoachRequest = null;
-      activeExplanation = null;
+      activePositionCommentary = null;
       activeIdea = null;
       scheduleCoachRestart();
     }
@@ -998,7 +1001,6 @@
   }
 
   function newGame(side: Side = playerSide) {
-    const retryCoach = coachUnavailable;
     const turnToInterrupt = activeTurnId;
     gameSession += 1;
     turnToken += 1;
@@ -1011,21 +1013,20 @@
     flipped = side === "b";
     selected = null;
     moves = [];
-    latestAnalysis = null;
-    selfPlayAnalysis = null;
+    positionAnalysis = null;
+    positionCommentary = null;
     latestFeedback = null;
     insight = null;
     ideaDraft = "";
     ideaThreads = {};
     ideaQueue = [];
     activeIdea = null;
-    coachNotes = {};
-    explanationQueue = [];
+    positionCommentaryQueue = [];
     codexReply = "";
     activeMessageId = "";
     activeTurnId = "";
     activeCoachRequest = null;
-    activeExplanation = null;
+    activePositionCommentary = null;
     coachBusy = false;
     if (turnToInterrupt) void interruptCoachTurn(turnToInterrupt).catch(() => {});
     note = playMode === "self"
@@ -1034,11 +1035,6 @@
     noteLabel = "Session setup";
     phase = hasNativeHost() ? "ready" : "offline";
     statusText = hasNativeHost() ? "Set up your session" : "Desktop app required for Stockfish";
-    if (solEnabled && retryCoach) {
-      coachStartAttempts = 0;
-      coachUnavailable = false;
-      void startCoachReliably(true);
-    }
   }
 
   function chooseSide(side: Side) {
@@ -1050,7 +1046,6 @@
   function choosePlayMode(mode: PlayMode) {
     if (gameStarted) return;
     playMode = mode;
-    if (mode === "self" && solEnabled) toggleSol();
     note = mode === "self"
       ? "Move both colors. Coach view shows the best move for the side to move."
       : "Choose a side and whether to show engine help.";
@@ -1058,30 +1053,15 @@
 
   function toggleCoachingAids() {
     coachingAids = !coachingAids;
-    if (coachingAids && playMode === "self" && gameStarted) {
-      void requestSelfPlayAnalysis(liveFen, gameSession);
+    if (coachingAids && gameStarted && phase === "ready") {
+      void requestPositionAnalysis(liveFen, gameSession);
     } else if (!coachingAids) {
-      selfPlayAnalysis = null;
+      positionAnalysis = null;
     }
   }
 
-  function toggleSol() {
-    solEnabled = !solEnabled;
-    if (solEnabled) {
-      coachStartAttempts = 0;
-      void startCoachReliably();
-      return;
-    }
-
-    clearCoachTimers();
-    codexReady = false;
-    coachUnavailable = false;
-    explanationQueue = [];
-    ideaQueue = [];
-    const turnToInterrupt = activeTurnId;
-    activeTurnId = "";
-    if (turnToInterrupt) void interruptCoachTurn(turnToInterrupt).catch(() => {});
-    void stopCoach().catch(() => {});
+  function toggleBestMoves() {
+    showBestMoves = !showBestMoves;
   }
 
   function startGame() {
@@ -1095,7 +1075,7 @@
       statusText = "White to move";
       note = "Move both colors.";
       noteLabel = "Self play";
-      void requestSelfPlayAnalysis(liveFen, gameSession);
+      void requestPositionAnalysis(liveFen, gameSession);
       return;
     }
     note = playerSide === "w"
@@ -1105,6 +1085,7 @@
     if (playerSide === "w") {
       phase = "ready";
       statusText = "Your move";
+      void requestPositionAnalysis(liveFen, gameSession);
     } else {
       statusText = "Codex is thinking";
       void makeCodexMove(++turnToken);
@@ -1115,11 +1096,12 @@
     if (phase === "complete") return;
     turnToken += 1;
     gameSession += 1;
-    explanationQueue = [];
+    positionCommentaryQueue = [];
+    positionCommentary = null;
     ideaQueue = [];
     activeIdea = null;
     activeCoachRequest = null;
-    activeExplanation = null;
+    activePositionCommentary = null;
     const turnToInterrupt = activeTurnId;
     activeTurnId = "";
     if (turnToInterrupt) void interruptCoachTurn(turnToInterrupt).catch(() => {});
@@ -1169,7 +1151,7 @@
             <small>
               {playMode === "self"
                 ? "Self play"
-                : `${engineName} 0.7s${solEnabled ? ` · ${codexReady ? coachBusy ? "writing" : "Sol ready" : coachUnavailable ? "Sol unavailable" : "connecting"}` : ""}`}
+                : `${engineName} 0.7s`}
             </small>
           </span>
           {#if displayPosition.inCheck() && displayPosition.turn() === topSide}<em>Check</em>{/if}
@@ -1270,7 +1252,7 @@
                 <div class="conversation-turns" role="log" aria-label="Coaching discussion">
                   {#each ideaThread as turn}
                     <article class:error={turn.state === "error"}>
-                      <div class="player-question"><span>You</span><p>{turn.question}</p></div>
+                      <div class="player-question"><p>{turn.question}</p></div>
                       <div class="codex-answer">
                         <span>Codex</span>
                         {#if turn.reply}
@@ -1299,14 +1281,12 @@
             <h1>{playMode === "self" ? "Play both sides." : "Choose a side and start the game."}</h1>
           {:else if historyPly !== null}
             <h1>{historyMove ? `${moveNumber(historyMove)}${historyMove.side === "w" ? "." : "…"} ${historyMove.san}` : "Starting position"}</h1>
-            {#if solEnabled && historyCoachNote}
-              <p>{historyCoachNote.text}</p>
-            {:else if historyMove}
+            {#if historyMove}
               <p>{historyMove.side === "w" ? "White" : "Black"} played {historyMove.san}. Use the arrows to move through the game or return to the live board.</p>
             {/if}
           {:else if latestCodexMove}
-            <h1>{latestCoachNote?.heading ?? latestCodexMove.san}</h1>
-            {#if solEnabled && latestCoachNote}<p>{latestCoachNote.text}</p>{/if}
+            <h1>{latestCodexMove.san}</h1>
+            {#if note}<p class:preserve={note.includes("\n")}>{note}</p>{/if}
           {:else}
             <h1>{moves.at(-1)?.san}</h1>
             {#if note}<p class:preserve={note.includes("\n")}>{note}</p>{/if}
@@ -1324,7 +1304,7 @@
                 <button class:chosen={playMode === "self"} type="button" onclick={() => choosePlayMode("self")}>Self play</button>
               </div>
               <div class="coach-setting">
-                <span><strong>Coach view</strong><small>Evaluation, move marks, and best-move arrows</small></span>
+                <span><strong>Coach view</strong><small>Evaluation and move feedback</small></span>
                 <button
                   type="button"
                   role="switch"
@@ -1334,19 +1314,17 @@
                   onclick={toggleCoachingAids}
                 ><i></i></button>
               </div>
-              {#if playMode === "codex"}
-                <div class="coach-setting">
-                  <span><strong>Sol commentary</strong><small>Explain moves while you play</small></span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={solEnabled}
-                    aria-label="Sol commentary"
-                    class:on={solEnabled}
-                    onclick={toggleSol}
-                  ><i></i></button>
-                </div>
-              {/if}
+              <div class="coach-setting">
+                <span><strong>Best moves</strong><small>Arrow and engine line</small></span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={showBestMoves}
+                  aria-label="Best moves"
+                  class:on={showBestMoves}
+                  onclick={toggleBestMoves}
+                ><i></i></button>
+              </div>
               <div class="side-choice" aria-label={playMode === "self" ? "Choose board orientation" : "Choose a side"}>
                 <button class:chosen={playerSide === "w"} type="button" onclick={() => chooseSide("w")}>{playMode === "self" ? "White below" : "White"}</button>
                 <button class:chosen={playerSide === "b"} type="button" onclick={() => chooseSide("b")}>{playMode === "self" ? "Black below" : "Black"}</button>
@@ -1356,7 +1334,7 @@
           {/if}
         {/if}
 
-        {#if solEnabled && !reflectionFen && historyPly === null && insight && phase !== "complete"}
+        {#if !reflectionFen && historyPly === null && insight && phase !== "complete"}
           <button class="insight-invitation" type="button" onclick={openInsight}>
             <span>Earlier · {insight.move.san}</span>
             <strong>Compare your move with Stockfish</strong>
@@ -1364,21 +1342,40 @@
           </button>
         {/if}
 
-        {#if playMode === "codex" && gameStarted && !reflectionFen && historyPly === null && phase !== "complete"}
-          <div class="sol-live-setting">
-            <span>Sol commentary</span>
+        {#if gameStarted && !reflectionFen && historyPly === null && phase !== "complete"}
+          <div class="codex-insight">
             <button
               type="button"
-              role="switch"
-              aria-checked={solEnabled}
-              aria-label="Sol commentary"
-              class:on={solEnabled}
-              onclick={toggleSol}
-            ><i></i></button>
+              onclick={askCodexAboutPosition}
+              disabled={phase !== "ready" || coachBusy || positionCommentary?.state === "preparing" || positionCommentary?.state === "queued" || positionCommentary?.state === "thinking"}
+            >{positionCommentary?.fen === liveFen && positionCommentary.state === "complete" ? "Get another insight" : "Get Codex insight"}</button>
+            {#if positionCommentary?.fen === liveFen}
+              {#if positionCommentary.text}
+                <p>{positionCommentary.text}</p>
+              {:else if positionCommentary.state === "preparing"}
+                <p>Checking the position with Stockfish…</p>
+              {:else}
+                <p>{codexReady ? "Codex is reading the position…" : "Connecting to Codex…"}</p>
+              {/if}
+            {/if}
           </div>
         {/if}
 
         {#if gameStarted && historyPly === null && !reflectionFen}
+          <div class="best-move-setting">
+            <span>Best moves</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showBestMoves}
+              aria-label="Best moves"
+              class:on={showBestMoves}
+              onclick={toggleBestMoves}
+            ><i></i></button>
+          </div>
+        {/if}
+
+        {#if gameStarted && historyPly === null && !reflectionFen && showBestMoves}
           <div class="line-glimpse">
             <span>Engine line</span>
             <p>{principalLine.length ? principalLine.slice(0, 5).join("  ") : currentOpening ? "Opening book move" : "Waiting for Stockfish"}</p>
@@ -1428,7 +1425,7 @@
   .player-row em { color: var(--coral-dark); font-size: 11px; font-style: normal; font-weight: 700; text-transform: uppercase; }
   .coach-feedback { display: grid; grid-template-columns: 20px auto auto minmax(0, 1fr) auto; gap: 7px; align-items: center; min-height: 30px; margin-left: 36px; color: var(--ink-soft); }
   .coach-feedback.empty { visibility: hidden; }
-  .coach-feedback strong { font-family: var(--display); font-size: 12px; font-weight: 650; }
+  .coach-feedback strong { font-size: 12px; font-weight: 700; }
   .coach-feedback span { font-size: 11px; font-weight: 700; text-transform: uppercase; }
   .coach-feedback em { overflow: hidden; color: var(--coral-dark); font-size: 11px; font-style: normal; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
   .coach-feedback small { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -1449,7 +1446,7 @@
   .note-copy { align-self: center; padding: 12px 0 28px; }
   h1 { max-width: 390px; margin: 0; font-family: var(--display); font-size: clamp(25px, 2.6vw, 38px); font-variation-settings: "opsz" 42, "wght" 540; line-height: 1.08; letter-spacing: 0; }
   h1 i { color: var(--coral-dark); font-style: normal; }
-  .note-copy p { max-width: 390px; margin: 18px 0 0; color: var(--ink-soft); font-family: var(--display); font-size: 15px; line-height: 1.55; }.note-copy p.preserve { white-space: pre-line; }
+  .note-copy p { max-width: 390px; margin: 18px 0 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }.note-copy p.preserve { white-space: pre-line; }
   .reflection-workspace { display: grid; grid-template-rows: auto minmax(110px, 1fr) auto; min-height: 0; }
   .reflection-workspace.empty { grid-template-rows: auto auto auto; align-content: start; }
   .reflection-workspace.empty .idea-form { margin-top: 8px; }
@@ -1460,7 +1457,7 @@
   .evidence-strip > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; min-width: 0; padding: 10px 12px 10px 0; }
   .evidence-strip > div + div { border-left: 1px solid var(--line); padding-left: 12px; }
   .evidence-strip span { grid-column: 1 / -1; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
-  .evidence-strip strong { overflow: hidden; font-family: var(--display); font-size: 14px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+  .evidence-strip strong { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
   .evidence-strip em { align-self: center; color: var(--muted); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; text-align: right; }
   .coach-conversation { min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
   .conversation-start { display: grid; gap: 14px; align-content: center; min-height: 132px; padding: 20px 0; }
@@ -1470,16 +1467,17 @@
   .question-prompts button:hover { border-bottom-color: var(--coral-dark); color: var(--coral-dark); }
   .conversation-turns article { padding: 17px 0 19px; border-bottom: 1px solid var(--line); }
   .conversation-turns article.error .codex-answer { color: var(--muted); }
-  .player-question, .codex-answer { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; }
+  .player-question { display: block; }
+  .codex-answer { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; }
   .codex-answer { margin-top: 13px; color: var(--ink-soft); }
-  .player-question > span, .codex-answer > span { padding-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
-  .player-question p, .codex-answer p { margin: 0; overflow-wrap: anywhere; font-family: var(--display); font-size: 13px; line-height: 1.52; }
+  .codex-answer > span { padding-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
+  .player-question p, .codex-answer p { margin: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.55; }
   .player-question p { color: var(--ink); font-weight: 560; }
   .codex-answer .answer-state { color: var(--muted); font-style: italic; }
   .idea-form { padding: 15px 0 12px; border-top: 1px solid var(--line-strong); }
   .idea-form label { display: block; margin-bottom: 7px; color: var(--ink-soft); font-size: 11px; font-weight: 700; }
   .idea-input { display: grid; grid-template-columns: minmax(0, 1fr) 38px; align-items: end; border-bottom: 1px solid var(--ink-soft); }
-  textarea { width: 100%; min-height: 54px; max-height: 112px; resize: none; border: 0; padding: 7px 8px 9px 0; color: var(--ink); background: transparent; font-family: var(--display); font-size: 14px; line-height: 1.42; }
+  textarea { width: 100%; min-height: 54px; max-height: 112px; resize: none; border: 0; padding: 7px 8px 9px 0; color: var(--ink); background: transparent; font-size: 14px; line-height: 1.5; }
   textarea::placeholder { color: var(--faint); } textarea:focus { outline: 0; }
   .idea-input:focus-within { border-bottom-color: var(--coral-dark); }
   .idea-input button { display: grid; width: 34px; height: 34px; place-items: center; margin-bottom: 7px; border: 0; border-radius: 50%; color: var(--pearl); background: var(--ink); cursor: pointer; }.idea-input button:disabled { opacity: .3; }
@@ -1487,7 +1485,7 @@
   .continue { width: fit-content; border: 1px solid var(--ink); border-radius: 3px; padding: 9px 14px; color: var(--pearl); background: var(--ink); font-size: 11px; font-weight: 650; cursor: pointer; }.continue:disabled { opacity: .4; }
   .insight-invitation { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; width: 100%; margin: 16px 0; border: 0; border-block: 1px solid var(--line); padding: 13px 0; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
   .insight-invitation span { grid-column: 1 / -1; color: var(--coral-dark); font-size: 11px; font-weight: 750; text-transform: uppercase; }
-  .insight-invitation strong { font-family: var(--display); font-size: 13px; font-weight: 550; }
+  .insight-invitation strong { font-size: 13px; font-weight: 650; }
   .insight-invitation em { align-self: center; color: var(--muted); font-size: 11px; font-style: normal; }
   .insight-invitation:hover strong { color: var(--coral-dark); }
   .game-setup { display: grid; gap: 12px; padding-top: 18px; border-top: 1px solid var(--line); }
@@ -1499,11 +1497,16 @@
   .coach-setting button i { position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform var(--motion-fast) ease-out, background var(--motion-fast) ease-out; }
   .coach-setting button.on { border-color: var(--sage); background: color-mix(in srgb, var(--sage) 18%, var(--pearl-raised)); }
   .coach-setting button.on i { background: var(--sage); transform: translateX(16px); }
-  .sol-live-setting { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
-  .sol-live-setting button { position: relative; width: 34px; height: 18px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0; background: var(--pearl-raised); cursor: pointer; }
-  .sol-live-setting button i { position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform var(--motion-fast) ease-out, background var(--motion-fast) ease-out; }
-  .sol-live-setting button.on { border-color: var(--sage); background: color-mix(in srgb, var(--sage) 18%, var(--pearl-raised)); }
-  .sol-live-setting button.on i { background: var(--sage); transform: translateX(16px); }
+  .codex-insight { display: grid; gap: 14px; justify-items: start; padding-top: 14px; border-top: 1px solid var(--line); }
+  .codex-insight p { max-width: 420px; margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+  .codex-insight button { border: 0; border-bottom: 1px solid var(--line-strong); border-radius: 0; padding: 6px 0; color: var(--ink); background: transparent; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+  .codex-insight button:hover:not(:disabled) { color: var(--coral-dark); }
+  .codex-insight button:disabled { opacity: .45; cursor: default; }
+  .best-move-setting { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; font-weight: 650; }
+  .best-move-setting button { position: relative; width: 34px; height: 18px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0; background: var(--pearl-raised); cursor: pointer; }
+  .best-move-setting button i { position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform var(--motion-fast) ease-out, background var(--motion-fast) ease-out; }
+  .best-move-setting button.on { border-color: var(--sage); background: color-mix(in srgb, var(--sage) 18%, var(--pearl-raised)); }
+  .best-move-setting button.on i { background: var(--sage); transform: translateX(16px); }
   .mode-choice, .side-choice { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line-strong); border-radius: 3px; overflow: hidden; }
   .mode-choice button, .side-choice button { border: 0; padding: 9px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; }
   .mode-choice button + button, .side-choice button + button { border-left: 1px solid var(--line-strong); }
@@ -1519,7 +1522,7 @@
   .moves button:hover, .moves button.active { border-bottom-color: var(--coral-dark); color: var(--coral-dark); }
   .moves button.player-move { color: var(--ink); font-weight: 650; }
   .moves button.player-move.active { color: var(--coral-dark); }
-  .moves .empty-moves { flex: 0 0 auto; color: var(--faint); font-family: var(--display); font-size: 12px; }
+  .moves .empty-moves { flex: 0 0 auto; color: var(--faint); font-size: 12px; }
   .turn-count { color: var(--muted); font-size: 11px; }
   @keyframes pulse { 0%, 100% { opacity: .35; transform: translateY(1px); } 50% { opacity: 1; transform: translateY(-1px); } }
   @media (max-width: 900px) {
@@ -1540,7 +1543,7 @@
     .evidence-strip > div + div { padding-left: 8px; }
     .evidence-strip strong { font-size: 13px; }
     .question-prompts { display: grid; justify-items: start; }
-    .player-question, .codex-answer { grid-template-columns: 38px minmax(0, 1fr); gap: 7px; }
+    .codex-answer { grid-template-columns: 38px minmax(0, 1fr); gap: 7px; }
     .board-stage.with-evaluation { grid-template-columns: 22px minmax(0, 1fr); gap: 6px; }
     .evaluation-slot :global(.evaluation) { width: 22px; }
     .coach-feedback { margin-left: 28px; }

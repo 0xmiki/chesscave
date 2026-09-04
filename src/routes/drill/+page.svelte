@@ -210,10 +210,9 @@
     {#if loading}
       <section class="state-card"><span class="spinner"></span><p>Loading drills…</p></section>
     {:else if error && !card && !cards.length}
-      <section class="state-card error-state"><span>DRILL UNAVAILABLE</span><h1>Your drills could not be opened.</h1><p>{error}</p></section>
+      <section class="state-card error-state"><h1>Drills unavailable.</h1><p>{error}</p></section>
     {:else if !card}
       <section class="state-card empty-state">
-        <span>{cards.length ? "QUEUE COMPLETE" : "NO DRILLS YET"}</span>
         <h1>{cards.length ? "No drills are due." : "You have no drills yet."}</h1>
         <p>
           {cards.length
@@ -275,7 +274,6 @@
         <aside class:revealed={Boolean(attemptedMove)} class="lesson">
           {#if wrongSideCard}
             <div class="waiting-copy side-warning">
-              <span>SIDE MISMATCH</span>
               <h1>This is your opponent's turn.</h1>
               <p>This drill was saved for the wrong side and cannot be played.</p>
             </div>
@@ -286,30 +284,33 @@
             </div>
           {:else}
             <div class:correct={attemptedMove.correct} class="result" aria-live="polite">
-              <span>{attemptedMove.correct ? "FOUND" : "NOT YET"}</span>
-              <h1>{attemptedMove.san}</h1>
-              <p>
+              <h1>
                 {attemptedMove.correct
                   ? "Correct."
-                  : `The answer is ${card.quiz.acceptedMoves.map((move) => move.san).join(" or ")}. The arrow shows it on the board.`}
+                  : `Try ${card.quiz.acceptedMoves.map((move) => move.san).join(" or ")}.`}
+              </h1>
+              <p>
+                {attemptedMove.correct
+                  ? `You played ${attemptedMove.san}.`
+                  : `You played ${attemptedMove.san}. The arrow shows the move on the board.`}
               </p>
             </div>
 
             <div class="diagnosis">
-              <span>WHAT WENT WRONG</span>
+              <h2>What happened</h2>
               <p>{card.diagnosis.mistake}</p>
             </div>
             {#if explanation?.type === "explanation"}
               <div class="reveal-block">
-                <span>WHY</span>
+                <h2>Why</h2>
                 <p>{explanation.text}</p>
               </div>
             {/if}
             {#if variation?.type === "variation"}
-              <div class="line"><span>LINE</span><p>{variation.moves.join(" ")}</p></div>
+              <div class="line"><h2>Line</h2><p>{variation.moves.join(" ")}</p></div>
             {/if}
             {#if principle?.type === "principle"}
-              <div class="principle"><span>PATCH</span><p>{principle.text}</p></div>
+              <div class="principle"><h2>Remember</h2><p>{principle.text}</p></div>
             {/if}
             <div class="review-actions">
               <button type="button" disabled={saving} onclick={() => record("again")}> 
@@ -355,7 +356,7 @@
 
   .due-count {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   main {
@@ -387,8 +388,8 @@
 
   .card-context > span,
   .card-context small {
-    color: var(--muted);
-    font-size: 11px;
+    color: var(--ink-soft);
+    font-size: 12px;
   }
 
   .card-context small {
@@ -409,47 +410,43 @@
     border-block: 1px solid var(--line-strong);
   }
 
-  .waiting-copy > span,
-  .result > span,
-  .diagnosis > span,
-  .reveal-block > span,
-  .line > span,
-  .principle > span,
-  .state-card > span {
-    color: var(--coral-dark);
-    font-size: 11px;
-    font-weight: 780;
-    letter-spacing: 0.13em;
-  }
-
   .waiting-copy h1,
   .result h1,
   .state-card h1 {
-    margin: 8px 0 0;
+    margin: 0;
     font-family: var(--display);
     font-size: 34px;
     font-variation-settings: "opsz" 38, "wght" 560;
+  }
+
+  .diagnosis h2,
+  .reveal-block h2,
+  .line h2,
+  .principle h2 {
+    margin: 0;
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 700;
   }
 
   .waiting-copy p,
   .result p,
   .state-card p {
     margin: 13px 0 0;
-    color: var(--muted);
-    font-family: var(--display);
+    color: var(--ink-soft);
     font-size: 14px;
-    line-height: 1.55;
+    line-height: 1.6;
   }
 
   .source-link {
     width: fit-content;
-    min-height: 32px;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    padding: 0 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line-strong);
+    border-radius: 0;
+    padding: 6px 0;
     color: var(--ink-soft);
     background: transparent;
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -463,13 +460,13 @@
 
   .delete-trigger,
   .delete-confirmation button {
-    min-height: 32px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 0 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    padding: 6px 0;
     color: var(--muted);
     background: transparent;
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -487,7 +484,7 @@
 
   .delete-confirmation > span {
     color: var(--ink-soft);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .delete-confirmation button:disabled {
@@ -499,7 +496,6 @@
     border-bottom: 1px solid var(--line);
   }
 
-  .result.correct > span,
   .result.correct h1 {
     color: var(--sage);
   }
@@ -517,9 +513,8 @@
   .principle p {
     margin: 6px 0 0;
     color: var(--ink-soft);
-    font-family: var(--display);
-    font-size: 13px;
-    line-height: 1.52;
+    font-size: 14px;
+    line-height: 1.6;
   }
 
   .principle {
@@ -531,7 +526,7 @@
 
   .review-actions {
     display: grid;
-    grid-template-columns: 1fr 1.3fr;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
     margin-top: 18px;
   }
@@ -540,29 +535,33 @@
     display: grid;
     gap: 1px;
     place-items: center;
-    min-height: 42px;
+    min-height: 46px;
     border: 1px solid var(--line-strong);
-    border-radius: 8px;
+    border-radius: 3px;
     color: var(--ink-soft);
     background: var(--pearl-raised);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
   }
 
   .review-actions button span {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
+  }
+
+  .review-actions button:hover:not(:disabled) {
+    background: var(--pearl);
   }
 
   .review-actions button small {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 550;
   }
 
   .review-actions .understood small {
-    color: rgba(255, 255, 255, 0.65);
+    color: rgba(255, 255, 255, 0.76);
   }
 
   kbd {
@@ -571,9 +570,13 @@
   }
 
   .review-actions .understood {
-    border-color: var(--ink);
-    color: var(--pearl-raised);
-    background: var(--ink);
+    border-color: var(--sage);
+    color: #fffdf8;
+    background: var(--sage);
+  }
+
+  .review-actions .understood:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--sage) 90%, var(--ink));
   }
 
   .review-actions button:disabled {
@@ -583,7 +586,7 @@
   .save-error {
     margin: 12px 0 0;
     color: var(--danger);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .state-card {
@@ -605,7 +608,7 @@
     padding: 10px 14px;
     color: var(--pearl-raised);
     background: var(--ink);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     text-decoration: none;
   }
@@ -636,14 +639,14 @@
   .saved-drill strong {
     overflow: hidden;
     color: var(--ink-soft);
-    font-size: 11px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .saved-drill small {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .spinner {

@@ -31,7 +31,7 @@ Type `quit` to close the engine. If you keep Stockfish elsewhere, set
 `CHESSCAVE_STOCKFISH_PATH` to the executable's full path before starting
 ChessCave.
 
-Sol commentary and the Study coach also need a working local Codex installation
+Codex commentary and the Study coach also need a working local Codex installation
 and login. The rest of the chess analysis only needs Stockfish.
 
 ## What you can do
@@ -47,8 +47,9 @@ device.
 
 Play a full game against Stockfish as White or Black, or choose Self play to
 move both colors. Turn on Coach view to see the evaluation, move labels, and
-best-move arrows. In self-play, the arrow follows the side to move. Sol
-commentary is optional and starts off.
+best-move arrows. In self-play, the arrow follows the side to move. The Best
+moves toggle hides the arrow and engine line. Press Get Codex insight when you
+want commentary on the current position.
 
 ### Study
 
@@ -98,6 +99,8 @@ started to slip.
 
 - Press Left or Right to move backward or forward through a game. These keys do
   nothing while you are typing in a field.
+- Hold Shift and press an arrow key to move keyboard focus between board
+  squares.
 - Drag a piece to a legal square, or select the source and destination squares.
 - Right-drag on the board to draw a yellow arrow. Hold Shift for green, Ctrl for
   red, or Alt for blue.

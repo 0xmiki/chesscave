@@ -43,7 +43,7 @@ effort. Both model choices can be overridden with `CHESSCAVE_LIVE_COACH_MODEL`
 and `CHESSCAVE_STUDY_COACH_MODEL`. The optional
 `CHESSCAVE_LIVE_COACH_SERVICE_TIER=priority` enables the account's faster tier.
 
-The installed app-server exposed Sol, Terra, Luna, GPT-5.4, GPT-5.4 Mini, and
+The installed app-server exposed several model aliases and
 Codex Spark. Its catalog calls Spark “ultra-fast” for coding and Luna “fast and
 affordable.” GPT-5.4 Mini is marked for replacement by Luna. OpenAI does not
 publish guaranteed tokens-per-second figures for these Codex choices, so a
@@ -153,8 +153,7 @@ never rewinds the actual game: Codex may finish its current work and the live
 position remains intact underneath the review.
 
 The board becomes read-only while reviewing. The side panel names the exact
-move and opening at that ply and shows the coaching note stored for that turn
-when one exists. Live-only evaluation, best-move arrows, classifications, and
+move and opening at that ply. Live-only evaluation, best-move arrows, classifications, and
 thinking indicators are hidden so later analysis cannot be mistaken for an
 earlier position. Returning to live is one action and restores the current
 board with its coaching signals.
@@ -178,9 +177,7 @@ exchange, so Codex can answer a challenge directly instead of restarting its
 explanation. The composer remains writable while an answer is arriving. A new
 question can be prepared, but only one is sent at a time.
 
-Deliberate questions take priority over queued background move commentary. If a
-background note is already streaming, the question appears immediately with an
-honest waiting state and runs next. “Back to live” stays at the top of the desk;
+Codex only runs after the player asks a question. “Back to live” stays at the top of the desk;
 it does not continue or advance the game because the game already continued.
 
 The player may return to the live board while Codex is still writing. The answer
@@ -188,40 +185,23 @@ is attached to the move when ready, and the transcript is still there if the
 player reopens it. This reflection is optional, reversible, and owned by the
 player.
 
-### When Codex explains its own move
+### When the player asks about the live position
 
-The move is already on the board and it is already the player's turn. An
-immediate factual note says whether the move came from the opening book or a
-time-limited Stockfish search. Once the player's background comparison is also
-ready, ChessCave sends one full-turn coaching request rather than separate
-requests for each move.
+The Ask Codex button sends the exact live position, recent moves, opening, and
+current Stockfish line. Codex returns one short insight about the best plan and
+the main danger. ChessCave never requests this commentary automatically.
 
-That request gives Codex the player's classification, up to three Stockfish
-candidate lines, the played-move line, both scores, expected-points loss, and
-Codex's reply. The answer leads with what the player tried, explains the merit
-or concrete drawback, translates Stockfish's preferred move into a plan, and
-only then connects Codex's reply. Strong and book moves receive positive
-explanations; inaccuracies, mistakes, and blunders receive corrective ones. If
-the player's move ends the game, a player-only explanation is requested.
-
-The streamed explanation is stored against that exact full turn. Only the
-newest Codex move owns the primary note; a late answer for an older move cannot
-replace it.
-
-If the player moves quickly and Codex is still writing, full-turn explanations
-form an ordered queue rather than replacing one another or creating overlapping
-conversations. Requests made while the app-server is starting wait for
-readiness instead of being discarded. Chess play stays available throughout.
+The request is tied to the current position. Moving a piece clears the old
+answer, and a late response cannot replace commentary for a newer position.
 
 ### When something fails
 
 - Opening-book failure falls through to the time-budgeted engine.
 - Background comparison failure creates no warning because it does not affect
   the game.
-- Codex prose failure leaves the factual engine or book note in place.
+- Codex failure leaves the Stockfish evaluation, line, and arrow in place.
 - App-server readiness has a 12-second watchdog and three total startup
-  attempts. A lost stream requeues the current move explanation; exhausting
-  retries explicitly leaves Stockfish coaching active and marks commentary unavailable.
+  attempts. A lost stream marks the manual request as failed and leaves a retry.
 - Opponent-search failure preserves the position and offers a retry.
 - Restarting or resigning invalidates the coaching session and interrupts the
   active app-server turn. Late deltas cannot alter a newer game.
@@ -267,9 +247,9 @@ coaching mode.
 - Relevance: 2/2. Coach view identifies every move while the deeper reflection
   invitation still uses an eight-point expected-points threshold to suppress
   equivalent choices.
-- Player agency: 2/2. The amount of engine guidance is chosen before play.
-  Reflection remains optional and the live game never requires Continue.
-- Failure honesty: 2/2. Explanations are move- and session-scoped, startup is
+- Player agency: 2/2. Engine guidance is chosen before play, and Codex speaks
+  only after the player asks. Reflection remains optional.
+- Failure honesty: 2/2. Answers are position- and session-scoped, startup is
   recoverable, engine facts remain visible during prose failure, and resets
   interrupt obsolete work.
 
@@ -290,7 +270,7 @@ clarity, and player agency.
   were split between the board footer, status row, and engine line.
 - Conversational continuity: 0/2. A reply replaced a placeholder, follow-ups had
   no visible history, and closing the reflection erased the exchange.
-- Response priority: 0/2. Ambient move commentary could disable the deliberate
+- Response priority: 0/2. Automatic commentary could block the deliberate
   question the player came here to ask.
 - Visual clarity: 1/2. The editorial type was coherent, but an oversized generic
   headline pushed the actual question and answer into a cramped lower region.
@@ -303,8 +283,8 @@ clarity, and player agency.
   scores, and expected-points difference describe one exact decision.
 - Conversational continuity: 2/2. A move-scoped multi-turn transcript preserves
   the player's words, streamed answers, and follow-up context when reopened.
-- Response priority: 2/2. Player questions enter a priority queue ahead of
-  unsent ambient explanations, with visible queued, thinking, and failure states.
+- Response priority: 2/2. Codex runs only after a player request, with visible
+  queued, thinking, and failure states.
 - Visual clarity: 2/2. A compact comparison leads into a ruled dialogue and one
   anchored composer; there are no chat bubbles or competing article headline.
 - Player agency: 2/2. Suggested questions accelerate common needs without

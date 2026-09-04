@@ -65,7 +65,7 @@ fn coach_snapshot(inner: &CoachInner) -> CoachConnectionSnapshot {
 }
 
 const COACH_INSTRUCTIONS: &str = concat!(
-    "You are Sol, the calm and insightful ChessCave chess coach. ",
+    "You are Codex, the ChessCave chess coach. ",
     "Discuss chess only. The application supplies the exact position and game context on every turn. ",
     "For questions about an overall game, core mistakes, turning points, accuracy, or recurring patterns, ",
     "call the ChessCave MCP get_game_review tool with the supplied review key before answering. ",
@@ -87,7 +87,7 @@ fn study_coach_model() -> String {
     env::var("CHESSCAVE_STUDY_COACH_MODEL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "gpt-5.6-sol".to_string())
+        .unwrap_or_else(|| "gpt-5.6-terra".to_string())
 }
 
 fn live_coach_model() -> String {
@@ -101,7 +101,7 @@ fn deliberate_coach_model() -> String {
     env::var("CHESSCAVE_DELIBERATE_COACH_MODEL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "gpt-5.6-sol".to_string())
+        .unwrap_or_else(|| "gpt-5.6-terra".to_string())
 }
 
 fn live_coach_service_tier() -> Option<String> {
