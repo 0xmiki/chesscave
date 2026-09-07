@@ -27,8 +27,9 @@
 <p align="center"><sub>Review a complete game with Stockfish, explore the board, and ask Codex about the position.</sub></p>
 
 ChessCave is a desktop app for studying your own chess. It can load recent
-Chess.com games or a PGN, run a Stockfish review, save mistakes as drills, and
-keep chess notes. Your studies, reviews, drills, and notes stay on your
+Chess.com games or a PGN, run a Stockfish review, and save mistakes as drills,
+which work like position flashcards. You can also keep chess notes.
+Your studies, reviews, drills, and notes stay on your
 computer. Codex is optional and responds only when you ask.
 
 ## Before you install
@@ -75,8 +76,9 @@ operating system may ask you to confirm that you want to open the app.
   does not generate commentary after every move.
 - **Study.** Review a Chess.com game or imported PGN with Stockfish. Step through
   moves, compare alternatives, and inspect accuracy and turning points.
-- **Drill.** Save a mistake from Study and replay the position later. Stockfish
-  checks the answer before the drill is saved.
+- **Drill (Flashcard).** Save a mistake from Study as a position flashcard and
+  practice finding the right move later. Stockfish checks the answer before
+  the drill is saved.
 - **Conversion Trainer.** Replay a position where a winning advantage slipped
   away and try to finish the game against Stockfish.
 - **Notes.** Keep pages and nested pages for openings, games, and plans.
@@ -108,12 +110,14 @@ Open a recent game or paste PGN. Stockfish reviews every move and shows
 accuracy, move labels, the evaluation graph, engine lines, and the opening. Try
 legal alternatives on the board without changing the imported game.
 
-### Drill
+### Drill (Flashcard)
 
 ![A completed practice drill in ChessCave](docs/screenshots/drill.png)
 
-Practice positions saved from Study. Choose Again to repeat the drill soon or
-Understood to schedule it later. The source game remains one click away.
+Drills are like position flashcards made from your games. Revisit a position
+saved from Study and practice finding the right move. Choose Again to review
+the flashcard soon or Understood to schedule it later. The source game remains
+one click away.
 
 ### Notes
 
